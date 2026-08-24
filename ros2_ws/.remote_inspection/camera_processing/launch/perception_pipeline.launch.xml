@@ -1,0 +1,45 @@
+<launch>
+
+  <!--
+    Orbbec Astra Pro
+    IMPORTANT:
+    Must use astra_pro.launch.xml.
+    Do NOT replace with generic astra.launch.xml.
+  -->
+  <include
+    file="$(find-pkg-share astra_camera)/launch/astra_pro.launch.xml"/>
+
+  <!-- Ascend YOLOv8n 2D Detection -->
+  <node
+    pkg="camera_processing"
+    exec="rgbd_perception_node"
+    name="rgbd_perception_node"
+    output="screen">
+
+    <param
+      name="model_path"
+      value="/data/projects/perception_models/yolov8n/yolov8n.om"/>
+
+    <param
+      name="device_id"
+      value="0"/>
+
+    <param
+      name="confidence_threshold"
+      value="0.25"/>
+
+    <param
+      name="nms_iou_threshold"
+      value="0.45"/>
+
+    <param
+      name="max_detections"
+      value="100"/>
+
+    <param
+      name="log_every_n_frames"
+      value="30"/>
+
+  </node>
+
+</launch>

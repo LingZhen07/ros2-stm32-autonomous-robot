@@ -1,0 +1,3 @@
+config load C:/RobotProject/firmware/firmware.ioc
+project generate C:/RobotProject/firmware
+exit

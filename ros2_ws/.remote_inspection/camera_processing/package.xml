@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<?xml-model
+  href="http://download.ros.org/schema/package_format3.xsd"
+  schematypens="http://www.w3.org/2001/XMLSchema"?>
+
+<package format="3">
+  <name>camera_processing</name>
+  <version>0.1.0</version>
+
+  <description>
+    ROS 2 camera perception package for Astra RGB-D processing
+    and Ascend YOLOv8 2D object detection.
+  </description>
+
+  <maintainer email="user@example.com">HwHiAiUser</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- Build system -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- ROS 2 runtime / node -->
+  <depend>rclcpp</depend>
+
+  <!-- Camera messages -->
+  <depend>sensor_msgs</depend>
+
+  <!-- Depth processor output -->
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <!-- 2D AI detection output -->
+  <depend>vision_msgs</depend>
+
+  <!-- ROS 2 launch -->
+  <exec_depend>ros2launch</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

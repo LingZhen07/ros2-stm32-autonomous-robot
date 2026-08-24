@@ -1,0 +1,34 @@
+<launch>
+
+  <!-- Astra Pro RGB-D camera -->
+  <include file="$(find-pkg-share astra_camera)/launch/astra_pro.launch.xml">
+
+    <!-- Vendor Depth -> Color registration -->
+    <arg name="depth_registration" value="true"/>
+
+    <!-- Required for registered RGB point cloud -->
+    <arg name="enable_colored_point_cloud" value="true"/>
+
+    <!-- Keep extrinsics available for diagnostics/future use -->
+    <arg name="enable_publish_extrinsic" value="true"/>
+
+  </include>
+
+
+  <!-- Frozen Depth Camera Module v1 -->
+  <node
+    pkg="camera_processing"
+    exec="depth_processor"
+    name="depth_processor"
+    output="screen">
+
+    <param name="roi_radius" value="2"/>
+    <param name="min_valid_pixels" value="5"/>
+    <param name="log_every_n_frames" value="30"/>
+
+    <param name="temporal_window_size" value="5"/>
+    <param name="invalid_debounce_frames" value="3"/>
+
+  </node>
+
+</launch>

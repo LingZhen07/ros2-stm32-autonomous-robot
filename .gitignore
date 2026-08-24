@@ -1,0 +1,49 @@
+﻿# Build outputs
+build/
+install/
+log/
+Debug/
+Release/
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.obj
+*.d
+*.lst
+
+# STM32 / CubeIDE local state
+.metadata/
+.settings/
+
+# Python / ROS
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# ROS bags and large data
+*.db3
+*.mcap
+*.bag
+*.bag2
+rosbag2_*/
+datasets/
+data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Secrets / credentials
+.env
+*.pem
+*.key
+*.p12
+*.token
+secrets/
+credentials/
