@@ -1,0 +1,28 @@
+std_msgs/Header header
+
+uint8 IDLE=0
+uint8 ARMING=1
+uint8 DRIVING=2
+uint8 STOPPED=3
+uint8 FAULT=4
+
+uint8 state
+string state_name
+string reason
+
+bool scan_fresh
+bool bridge_connected
+bool bridge_healthy
+bool authority_armed
+float32 minimum_front_range_m
+
+builtin_interfaces/Time obstacle_detected_stamp
+builtin_interfaces/Time zero_twist_published_stamp
+builtin_interfaces/Time disarm_requested_stamp
+builtin_interfaces/Time authority_withdrawn_tx_stamp
+builtin_interfaces/Time stm32_stop_confirmed_stamp
+
+float64 detection_to_zero_twist_ms
+float64 detection_to_disarm_request_ms
+float64 detection_to_authority_withdrawal_ms
+float64 detection_to_stm32_confirmation_ms

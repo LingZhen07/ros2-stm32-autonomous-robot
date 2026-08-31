@@ -1,0 +1,19 @@
+[Unit]
+Description=RobotProject production ROS 2 STM32 bridge
+Requires=robot-can3.service
+After=robot-can3.service
+RequiresMountsFor=/data/ros2_ws
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=HwHiAiUser
+ExecStart=/data/ros2_ws/install/robot_stm32_bridge/lib/robot_stm32_bridge/start_production_bridge.sh
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

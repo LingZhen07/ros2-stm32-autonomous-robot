@@ -1,0 +1,26 @@
+robot_stm32_bridge:
+  ros__parameters:
+    can_interface: can3
+    cmd_vel_topic: /cmd_vel
+    imu_frame_id: imu_link
+    # Host-side deadline. This is intentionally well inside the frozen STM32 250 ms timeout.
+    command_timeout_ms: 100
+    status_timeout_ms: 350
+    reconnect_period_ms: 1000
+    unsupported_twist_epsilon: 1.0e-9
+
+straight_obstacle_stop_demo:
+  ros__parameters:
+    # Commissioning defaults only; these are not frozen robot safety specifications.
+    forward_speed_mps: 0.05
+    stop_distance_m: 0.35
+    front_sector_deg: 30.0
+    # Frozen base_link -> laser_frame yaw is pi, so robot-forward is 180 degrees in /scan.
+    front_center_deg: 180.0
+    scan_timeout_ms: 400
+    bridge_timeout_ms: 300
+    scan_topic: /scan
+    cmd_vel_topic: /cmd_vel
+    bridge_status_topic: /stm32/status
+    arm_service: /robot_stm32_bridge/arm
+    disarm_service: /robot_stm32_bridge/disarm

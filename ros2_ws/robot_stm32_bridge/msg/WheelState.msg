@@ -1,0 +1,35 @@
+std_msgs/Header header
+
+uint16 sequence
+uint32 stm32_timestamp_ms
+
+bool logical_mapping_valid
+bool left_position_valid
+bool right_position_valid
+bool left_measured_valid
+bool right_measured_valid
+bool left_target_valid
+bool right_target_valid
+bool left_controller_output_valid
+bool right_controller_output_valid
+
+int64 left_position_counts
+int64 right_position_counts
+int32 left_measured_cps
+int32 right_measured_cps
+int32 left_target_cps
+int32 right_target_cps
+float32 left_controller_output
+float32 right_controller_output
+
+uint16 encoder_1_raw_counter
+uint16 encoder_2_raw_counter
+bool encoder_1_raw_cps_valid
+bool encoder_2_raw_cps_valid
+int32 encoder_1_raw_cps
+int32 encoder_2_raw_cps
+
+uint16 flags
+uint16 encoder_1_age_ms
+uint16 encoder_2_age_ms
+uint16 sample_period_ms

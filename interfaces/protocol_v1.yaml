@@ -1,0 +1,369 @@
+name: RobotProject Communication Protocol
+status: FROZEN
+version:
+  major: 1
+  minor: 0
+compatibility:
+  accepted_by_v1_0: exact_version_only
+  incompatible_change_requires_version_update: true
+
+encoding:
+  byte_order: little_endian
+  signed_integer: twos_complement
+  compiler_struct_cast_allowed: false
+  reserved_fields_must_be_zero: true
+  application_crc: none
+  integrity: CAN_FD_link_layer_CRC_and_error_handling
+
+transport:
+  can_id_format: standard_11_bit
+  frame_format: CAN_FD
+  bit_rate_switch: true
+  remote_frames: reject
+  fdcan_kernel_clock_hz: 170000000
+  nominal:
+    bitrate_bps: 500000
+    prescaler: 17
+    sync_seg_tq: 1
+    seg1_tq: 15
+    seg2_tq: 4
+    sjw_tq: 4
+    total_tq: 20
+    sample_point: 0.8
+  data:
+    bitrate_bps: 2000000
+    prescaler: 5
+    sync_seg_tq: 1
+    seg1_tq: 13
+    seg2_tq: 3
+    sjw_tq: 3
+    total_tq: 17
+    sample_point: 0.8235294118
+
+freshness:
+  motion_command_timeout_ms: 250
+  host_heartbeat_timeout_ms: 500
+  motion_authority_timeout_ms: 500
+  safety_clock: STM32_local_reception_time
+  duplicate_refreshes_timeout: false
+  out_of_order_refreshes_timeout: false
+  clocks_must_be_synchronized: false
+
+sequence_semantics:
+  type: u16
+  streams: independent_per_CAN_ID
+  first_value: any
+  wrap: modulo_65536
+  comparison: delta_u16_1_to_0x7fff_is_newer
+  duplicate_delta: 0
+  out_of_order_delta_range: 0x8000_to_0xffff
+
+timestamp_semantics:
+  type: u32
+  unit: ms
+  source: STM32_monotonic_runtime
+  wrap_modulus: 4294967296
+  wrap_period_days: 49.7102696
+  reset_value: 0
+
+authority:
+  session_id_type: u32
+  session_id_zero_invalid: true
+  required_start_sequence:
+    - HOST_HEARTBEAT_bridge_ready
+    - MOTION_AUTHORITY_DISARMED
+    - MOTION_AUTHORITY_ARMED
+    - fresh_MOTION_COMMAND_BODY_VELOCITY
+  reconnect_reuses_previous_motion: false
+  reset_restores_active: false
+
+id_ranges:
+  - {start: 0x000, end: 0x07f, purpose: future_emergency_safety}
+  - {start: 0x080, end: 0x0ff, purpose: host_control_supervision}
+  - {start: 0x100, end: 0x17f, purpose: future_high_priority_status}
+  - {start: 0x180, end: 0x1ff, purpose: stm32_telemetry}
+  - {start: 0x200, end: 0x5ff, purpose: future_robot_functions}
+  - {start: 0x600, end: 0x6ff, purpose: future_commissioning_diagnostics}
+  - {start: 0x700, end: 0x7ff, purpose: future_discovery_version}
+
+messages:
+  MOTION_AUTHORITY:
+    can_id: 0x080
+    direction: orange_pi_to_stm32
+    payload_length_bytes: 16
+    baseline_rate_hz: 10
+    fields:
+      - {name: protocol_major, offset: 0, width: 1, type: u8, unit: none, scale: 1, valid: [1, 1]}
+      - {name: protocol_minor, offset: 1, width: 1, type: u8, unit: none, scale: 1, valid: [0, 0]}
+      - {name: sequence, offset: 2, width: 2, type: u16, unit: none, scale: 1, valid: [0, 65535]}
+      - {name: session_id, offset: 4, width: 4, type: u32, unit: none, scale: 1, valid: [1, 4294967295], invalid: 0}
+      - name: authority_state
+        offset: 8
+        width: 1
+        type: u8
+        unit: enum
+        scale: 1
+        values: {DISARMED: 0, ARMED: 1}
+      - {name: reserved_9, offset: 9, width: 1, type: u8, unit: none, scale: 1, valid: [0, 0]}
+      - {name: reserved_10, offset: 10, width: 2, type: u16, unit: none, scale: 1, valid: [0, 0]}
+      - {name: host_uptime_ms, offset: 12, width: 4, type: u32, unit: ms, scale: 1, valid: [0, 4294967295]}
+
+  MOTION_COMMAND:
+    can_id: 0x081
+    direction: orange_pi_to_stm32
+    payload_length_bytes: 16
+    baseline_rate_hz: 50
+    fields:
+      - {name: protocol_major, offset: 0, width: 1, type: u8, unit: none, scale: 1, valid: [1, 1]}
+      - {name: protocol_minor, offset: 1, width: 1, type: u8, unit: none, scale: 1, valid: [0, 0]}
+      - {name: sequence, offset: 2, width: 2, type: u16, unit: none, scale: 1, valid: [0, 65535]}
+      - {name: session_id, offset: 4, width: 4, type: u32, unit: none, scale: 1, valid: [1, 4294967295], invalid: 0}
+      - name: command_mode
+        offset: 8
+        width: 1
+        type: u8
+        unit: enum
+        scale: 1
+        values: {DISABLED: 0, BODY_VELOCITY: 1}
+      - {name: reserved_9, offset: 9, width: 1, type: u8, unit: none, scale: 1, valid: [0, 0]}
+      - {name: linear_velocity, offset: 10, width: 2, type: i16, unit: m/s, scale: 0.001, valid_wire: [-32767, 32767], invalid_wire: -32768}
+      - {name: angular_velocity, offset: 12, width: 2, type: i16, unit: rad/s, scale: 0.001, valid_wire: [-32767, 32767], invalid_wire: -32768}
+      - {name: reserved_14, offset: 14, width: 2, type: u16, unit: none, scale: 1, valid: [0, 0]}
+
+  HOST_HEARTBEAT:
+    can_id: 0x082
+    direction: orange_pi_to_stm32
+    payload_length_bytes: 16
+    baseline_rate_hz: 10
+    fields:
+      - {name: protocol_major, offset: 0, width: 1, type: u8, unit: none, scale: 1, valid: [1, 1]}
+      - {name: protocol_minor, offset: 1, width: 1, type: u8, unit: none, scale: 1, valid: [0, 0]}
+      - {name: sequence, offset: 2, width: 2, type: u16, unit: none, scale: 1, valid: [0, 65535]}
+      - {name: session_id, offset: 4, width: 4, type: u32, unit: none, scale: 1, valid: [1, 4294967295], invalid: 0}
+      - {name: host_uptime_ms, offset: 8, width: 4, type: u32, unit: ms, scale: 1, valid: [0, 4294967295]}
+      - name: flags
+        offset: 12
+        width: 2
+        type: u16
+        unit: bitset
+        scale: 1
+        bits: {0: BRIDGE_READY}
+        reserved_bits: [1, 15]
+      - {name: reserved_14, offset: 14, width: 2, type: u16, unit: none, scale: 1, valid: [0, 0]}
+
+  SYSTEM_STATUS:
+    can_id: 0x180
+    direction: stm32_to_orange_pi
+    payload_length_bytes: 32
+    baseline_rate_hz: 10
+    fields:
+      - {name: protocol_major, offset: 0, width: 1, type: u8, unit: none, scale: 1}
+      - {name: protocol_minor, offset: 1, width: 1, type: u8, unit: none, scale: 1}
+      - {name: sequence, offset: 2, width: 2, type: u16, unit: none, scale: 1}
+      - {name: timestamp_ms, offset: 4, width: 4, type: u32, unit: ms, scale: 1}
+      - {name: firmware_major, offset: 8, width: 1, type: u8, unit: none, scale: 1}
+      - {name: firmware_minor, offset: 9, width: 1, type: u8, unit: none, scale: 1}
+      - {name: firmware_patch, offset: 10, width: 1, type: u8, unit: none, scale: 1}
+      - name: system_state
+        offset: 11
+        width: 1
+        type: u8
+        unit: enum
+        scale: 1
+        values: {BOOT: 0, INIT: 1, SAFE: 2, READY: 3, ACTIVE: 4, FAULT: 5}
+      - name: motion_flags
+        offset: 12
+        width: 2
+        type: u16
+        unit: bitset
+        scale: 1
+        bits:
+          0: FDCAN_INITIALIZED
+          1: CONTROLLER_ERROR_ACTIVE
+          2: HEARTBEAT_FRESH
+          3: DISARMED_HANDSHAKE_SEEN
+          4: AUTHORITY_ARMED
+          5: COMMAND_VALID
+          6: COMMAND_FRESH
+          7: MOTOR_AUTHORIZED
+          8: MOTOR_STBY_ENABLED
+          9: CRITICAL_TASKS_HEALTHY
+          10: WATCHDOG_REFRESH_ALLOWED
+          11: IMU_VALID
+          12: ENCODER_1_VALID
+          13: ENCODER_2_VALID
+          14: BATTERY_VALID
+          15: BODY_COMMAND_READY
+      - name: communication_flags
+        offset: 14
+        width: 2
+        type: u16
+        unit: bitset
+        scale: 1
+        bits:
+          0: ERROR_WARNING
+          1: ERROR_PASSIVE
+          2: BUS_OFF
+          3: RX_SOFTWARE_OVERFLOW_LATCHED
+          4: RX_HARDWARE_LOST_LATCHED
+          5: TX_FAILURE_LATCHED
+          6: PROTOCOL_REJECTION_LATCHED
+          7: VERSION_MISMATCH_LATCHED
+          8: SESSION_ACTIVE
+          9: BRIDGE_READY
+          10: FD_BRS_CONFIGURED
+          11: COMMAND_SEQUENCE_SEEN
+          12: HEARTBEAT_SEQUENCE_SEEN
+          13: AUTHORITY_FRESH
+        reserved_bits: [14, 15]
+      - {name: fault_flags, offset: 16, width: 4, type: u32, unit: bitset, scale: 1}
+      - {name: reset_reason, offset: 20, width: 4, type: u32, unit: bitset, scale: 1}
+      - {name: active_session_id, offset: 24, width: 4, type: u32, unit: none, scale: 1, invalid: 0}
+      - {name: last_command_sequence, offset: 28, width: 2, type: u16, unit: none, scale: 1, validity_flag: communication_flags.COMMAND_SEQUENCE_SEEN}
+      - {name: last_heartbeat_sequence, offset: 30, width: 2, type: u16, unit: none, scale: 1, validity_flag: communication_flags.HEARTBEAT_SEQUENCE_SEEN}
+
+  WHEEL_STATE:
+    can_id: 0x181
+    direction: stm32_to_orange_pi
+    payload_length_bytes: 64
+    baseline_rate_hz: 50
+    sign_convention: logical_forward_positive
+    fields:
+      - {name: protocol_major, offset: 0, width: 1, type: u8, unit: none, scale: 1}
+      - {name: protocol_minor, offset: 1, width: 1, type: u8, unit: none, scale: 1}
+      - {name: sequence, offset: 2, width: 2, type: u16, unit: none, scale: 1}
+      - {name: timestamp_ms, offset: 4, width: 4, type: u32, unit: ms, scale: 1}
+      - {name: left_position_counts, offset: 8, width: 8, type: i64, unit: decoded_count, scale: 1, invalid_wire: -9223372036854775808}
+      - {name: right_position_counts, offset: 16, width: 8, type: i64, unit: decoded_count, scale: 1, invalid_wire: -9223372036854775808}
+      - {name: left_measured_cps, offset: 24, width: 4, type: i32, unit: count/s, scale: 1, invalid_wire: -2147483648}
+      - {name: right_measured_cps, offset: 28, width: 4, type: i32, unit: count/s, scale: 1, invalid_wire: -2147483648}
+      - {name: left_target_cps, offset: 32, width: 4, type: i32, unit: count/s, scale: 1, invalid_wire: -2147483648}
+      - {name: right_target_cps, offset: 36, width: 4, type: i32, unit: count/s, scale: 1, invalid_wire: -2147483648}
+      - {name: left_controller_output, offset: 40, width: 2, type: i16, unit: normalized_effort, scale: 0.0001, valid_wire: [-10000, 10000], invalid_wire: -32768}
+      - {name: right_controller_output, offset: 42, width: 2, type: i16, unit: normalized_effort, scale: 0.0001, valid_wire: [-10000, 10000], invalid_wire: -32768}
+      - {name: encoder_1_raw_counter, offset: 44, width: 2, type: u16, unit: timer_count, scale: 1}
+      - {name: encoder_2_raw_counter, offset: 46, width: 2, type: u16, unit: timer_count, scale: 1}
+      - {name: encoder_1_raw_cps, offset: 48, width: 4, type: i32, unit: count/s, scale: 1, invalid_wire: -2147483648}
+      - {name: encoder_2_raw_cps, offset: 52, width: 4, type: i32, unit: count/s, scale: 1, invalid_wire: -2147483648}
+      - name: flags
+        offset: 56
+        width: 2
+        type: u16
+        unit: bitset
+        scale: 1
+        bits:
+          0: LOGICAL_MAPPING_VALID
+          1: ENCODER_1_VALID
+          2: ENCODER_2_VALID
+          3: LEFT_CONTROLLER_CONFIGURED
+          4: RIGHT_CONTROLLER_CONFIGURED
+          5: CONTROLLERS_ENABLED
+          6: LEFT_SATURATED
+          7: RIGHT_SATURATED
+          8: MOTOR_AUTHORIZED
+          9: MOTOR_STBY_ENABLED
+          10: LEFT_TARGET_VALID
+          11: RIGHT_TARGET_VALID
+          12: BODY_COMMAND_READY
+          13: ENCODER_SIGN_CALIBRATED
+        reserved_bits: [14, 15]
+      - {name: encoder_1_age_ms, offset: 58, width: 2, type: u16, unit: ms, scale: 1, saturated_at: 65535}
+      - {name: encoder_2_age_ms, offset: 60, width: 2, type: u16, unit: ms, scale: 1, saturated_at: 65535}
+      - {name: sample_period_ms, offset: 62, width: 2, type: u16, unit: ms, scale: 1}
+
+  IMU_DATA:
+    can_id: 0x182
+    direction: stm32_to_orange_pi
+    payload_length_bytes: 48
+    baseline_rate_hz: 100
+    fields:
+      - {name: protocol_major, offset: 0, width: 1, type: u8, unit: none, scale: 1}
+      - {name: protocol_minor, offset: 1, width: 1, type: u8, unit: none, scale: 1}
+      - {name: sequence, offset: 2, width: 2, type: u16, unit: none, scale: 1}
+      - {name: sample_timestamp_ms, offset: 4, width: 4, type: u32, unit: ms, scale: 1}
+      - name: flags
+        offset: 8
+        width: 2
+        type: u16
+        unit: bitset
+        scale: 1
+        bits: {0: SENSOR_VALID, 1: DATA_READY, 2: WHO_AM_I_MATCH, 3: INT1_OBSERVED, 4: INT2_OBSERVED, 5: ACCEL_VALID, 6: GYRO_VALID}
+        reserved_bits: [7, 15]
+      - {name: who_am_i, offset: 10, width: 1, type: u8, unit: register_value, scale: 1}
+      - name: imu_state
+        offset: 11
+        width: 1
+        type: u8
+        unit: enum
+        scale: 1
+        values: {NOT_INITIALIZED: 0, INITIALIZING: 1, READY: 2, FAULT: 3}
+      - {name: accel_x, offset: 12, width: 4, type: i32, unit: m/s^2, scale: 0.0001, invalid_wire: -2147483648}
+      - {name: accel_y, offset: 16, width: 4, type: i32, unit: m/s^2, scale: 0.0001, invalid_wire: -2147483648}
+      - {name: accel_z, offset: 20, width: 4, type: i32, unit: m/s^2, scale: 0.0001, invalid_wire: -2147483648}
+      - {name: gyro_x, offset: 24, width: 4, type: i32, unit: rad/s, scale: 0.00001, invalid_wire: -2147483648}
+      - {name: gyro_y, offset: 28, width: 4, type: i32, unit: rad/s, scale: 0.00001, invalid_wire: -2147483648}
+      - {name: gyro_z, offset: 32, width: 4, type: i32, unit: rad/s, scale: 0.00001, invalid_wire: -2147483648}
+      - {name: sample_age_ms, offset: 36, width: 2, type: u16, unit: ms, scale: 1, saturated_at: 65535}
+      - {name: reserved_38, offset: 38, width: 2, type: u16, unit: none, scale: 1, valid: [0, 0]}
+      - {name: int1_count, offset: 40, width: 4, type: u32, unit: event, scale: 1}
+      - {name: int2_count, offset: 44, width: 4, type: u32, unit: event, scale: 1}
+
+  BATTERY_STATE:
+    can_id: 0x183
+    direction: stm32_to_orange_pi
+    payload_length_bytes: 16
+    baseline_rate_hz: 2
+    fields:
+      - {name: protocol_major, offset: 0, width: 1, type: u8, unit: none, scale: 1}
+      - {name: protocol_minor, offset: 1, width: 1, type: u8, unit: none, scale: 1}
+      - {name: sequence, offset: 2, width: 2, type: u16, unit: none, scale: 1}
+      - {name: sample_timestamp_ms, offset: 4, width: 4, type: u32, unit: ms, scale: 1}
+      - {name: battery_voltage_mv, offset: 8, width: 2, type: u16, unit: mV, scale: 1, valid_wire: [0, 65534], invalid_wire: 65535}
+      - {name: raw_adc, offset: 10, width: 2, type: u16, unit: adc_count, scale: 1, valid_wire: [0, 4095]}
+      - name: flags
+        offset: 12
+        width: 2
+        type: u16
+        unit: bitset
+        scale: 1
+        bits: {0: MEASUREMENT_VALID, 1: ADC_CALIBRATED, 2: DIVIDER_PHYSICALLY_CALIBRATED}
+        reserved_bits: [3, 15]
+      - {name: sample_age_ms, offset: 14, width: 2, type: u16, unit: ms, scale: 1, saturated_at: 65535}
+
+fault_flags:
+  width: 32
+  bits:
+    0: {name: IMU_INITIALIZATION, severity: degraded}
+    1: {name: COMMAND_TIMEOUT, severity: critical}
+    2: {name: INVALID_MOTOR_COMMAND, severity: critical}
+    3: {name: SUPERVISOR, severity: critical}
+    4: {name: ENCODER_VALIDITY, severity: sensor_control}
+    5: {name: BATTERY_MEASUREMENT, severity: degraded}
+    6: {name: CONTROL_SATURATION, severity: degraded}
+    7: {name: CONTROL_ABNORMAL, severity: critical}
+    8: {name: INTERNAL_CONFIGURATION, severity: critical}
+    9: {name: RTOS_STACK_OVERFLOW, severity: critical}
+    10: {name: RTOS_MALLOC_FAILURE, severity: critical}
+    11: {name: FDCAN_COMMUNICATION, severity: critical_when_CAN_motion_affected}
+  reserved_bits: [12, 31]
+
+baseline_bus_load:
+  application_frames_per_second: 232
+  payload_bits_per_second: 75776
+  conservative_estimated_bus_time_percent_approx: 8
+  conservative_estimated_bus_time_percent_max: 10
+  estimate_includes_bit_stuffing_allowance_percent: 25
+  physical_measurement_required: true
+
+hardware_calibration:
+  left_forward_raw_cps_sign: -1
+  right_forward_raw_cps_sign: 1
+  logical_forward_sign: 1
+  encoder_1_wheel_mapping: TBD
+  encoder_2_wheel_mapping: TBD
+  motor_a_wheel_mapping: TBD
+  motor_b_wheel_mapping: TBD
+  effective_wheel_radius_m: TBD
+  wheel_track_m: TBD
+  encoder_decoded_counts_per_motor_revolution: TBD
+  motor_to_wheel_gear_ratio: TBD

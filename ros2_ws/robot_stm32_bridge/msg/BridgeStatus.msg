@@ -1,0 +1,64 @@
+std_msgs/Header header
+
+uint8 PROTOCOL_MAJOR=1
+uint8 PROTOCOL_MINOR=0
+
+uint8 SYSTEM_BOOT=0
+uint8 SYSTEM_INIT=1
+uint8 SYSTEM_SAFE=2
+uint8 SYSTEM_READY=3
+uint8 SYSTEM_ACTIVE=4
+uint8 SYSTEM_FAULT=5
+
+string can_interface
+bool socket_open
+bool connected
+bool protocol_valid
+bool can_healthy
+bool can_error_seen
+bool can_bus_off
+bool status_fresh
+string last_transport_error
+string last_protocol_error
+
+uint32 session_id
+bool arm_requested
+bool authority_armed
+bool command_fresh
+
+uint32 last_stm32_frame_age_ms
+uint32 last_system_status_age_ms
+uint32 last_wheel_state_age_ms
+uint32 last_imu_data_age_ms
+uint32 last_battery_state_age_ms
+uint64 rx_frame_count
+uint64 tx_frame_count
+uint64 rx_error_frame_count
+uint64 rx_socket_failure_count
+uint64 tx_failure_count
+uint64 protocol_reject_count
+uint64 version_mismatch_count
+uint64 sequence_discontinuity_count
+
+uint8 received_protocol_major
+uint8 received_protocol_minor
+uint8 firmware_major
+uint8 firmware_minor
+uint8 firmware_patch
+uint8 system_state
+uint16 motion_flags
+uint16 communication_flags
+uint32 fault_flags
+uint32 reset_reason
+uint32 active_session_id
+uint16 last_command_sequence
+uint16 last_heartbeat_sequence
+uint16 last_tx_command_sequence
+uint16 last_tx_heartbeat_sequence
+uint16 last_tx_authority_sequence
+bool command_ack_consistent
+bool heartbeat_ack_consistent
+bool stm32_critical_fault
+
+builtin_interfaces/Time last_zero_command_tx_stamp
+builtin_interfaces/Time last_disarm_tx_stamp

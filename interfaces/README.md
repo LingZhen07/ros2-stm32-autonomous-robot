@@ -1,60 +1,36 @@
-# Interfaces
+# RobotProject Shared Interfaces
 
-This directory is the authoritative **Linux ↔ STM32 communication-contract layer** for RobotProject.
+This directory is the authoritative Linux <-> STM32 communication-contract layer.
 
-## Scope
+## Frozen contract
 
-| Contract area | Content |
+| Contract | Status | Human specification | Machine-readable definition |
+|---|---|---|---|
+| RobotProject Communication Protocol v1.0 | `FROZEN` | [protocol_v1.md](protocol_v1.md) | [protocol_v1.yaml](protocol_v1.yaml) |
+
+Golden serialization examples are in [examples/protocol_v1_examples.md](examples/protocol_v1_examples.md).
+
+Protocol v1 freezes CAN FD transport timing, identifiers, payload layouts, units, scaling,
+ordering, command freshness, motion authority, reconnection, and status/fault semantics. The
+firmware and ROS domains must implement against these files; neither side may infer wire fields
+from the peer implementation directory.
+
+## Ownership
+
+| Domain | Responsibility |
 |---|---|
-| Transport | CAN / CAN FD, UART fallback |
-| Command | Body velocity, enable state, command mode |
-| Freshness | Sequence number, heartbeat, timeout semantics |
-| Telemetry | Encoder, wheel speed, IMU, battery, state, faults |
-| Encoding | Byte order, scaling, signedness, units |
-| Versioning | Protocol version and compatibility rules |
-| Integrity | CRC policy when required |
+| STM32 firmware | Decode and validate commands, enforce local freshness and safety, run differential-drive and wheel control, serialize telemetry |
+| Orange Pi / ROS | Convert `geometry_msgs/msg/Twist` to Protocol v1, supervise the session, decode telemetry, publish ROS state and diagnostics |
+| `interfaces/` | Source of truth for every cross-domain binary and behavioral contract |
 
-## Current Status
+## Accepted production deployment
 
-| Item | Status |
-|---|---|
-| Production transport direction | CAN FD |
-| STM32 controller | FDCAN1 |
-| Nominal CAN bring-up bitrate | 500 kbit/s |
-| CAN IDs | TBD |
-| CAN FD data-phase bitrate | TBD |
-| Payload layout | TBD |
-| Scaling | TBD |
-| Heartbeat format | TBD |
-| Timeout semantics | TBD |
-| CRC policy | TBD |
-| Protocol version | TBD |
+The current hardware revision uses Orange Pi CAN3 (`822d0000.mttcan`, `mttcan-id=3`) as SocketCAN
+`can3`, with GPIO2_17/CAN_TX3 and GPIO2_18/CAN_RX3. Linux production timing is explicitly configured
+as 500 kbit/s at 80.0% and 2 Mbit/s at 82.5%; BRS is set per Protocol 1.0 frame. This host setting
+interoperates with the frozen STM32 500 kbit/s / 2 Mbit/s timing without changing any wire field or
+protocol semantic.
 
-## Ownership Model
-
-| Domain | Implementation responsibility |
-|---|---|
-| Firmware | Parse commands, validate freshness, publish telemetry |
-| ROS / Linux | Encode commands, decode telemetry, expose ROS interfaces |
-| `interfaces/` | Shared source of truth for semantics and binary contracts |
-
-A protocol item moves from `TBD` to a frozen contract after deliberate cross-domain design and acceptance.
-
-Once frozen, both implementation domains follow the same contract version.
-
-## Recommended Future Layout
-
-```text
-interfaces/
-├── README.md
-├── protocol_v1.md
-├── can_ids.md
-├── messages/
-│   ├── command.md
-│   ├── telemetry.md
-│   └── fault_status.md
-└── examples/
-    └── frame_examples.md
-```
-
-Create these files when the corresponding protocol decisions are ready for implementation.
+Real `0x080`, `0x082`, and `0x180..0x183` traffic has passed with Error Active, zero TX/RX errors,
+and zero bus-off events. The robot remained DISARMED. CAN2 is historical and is not a production
+fallback.

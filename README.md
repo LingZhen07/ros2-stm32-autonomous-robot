@@ -10,12 +10,12 @@ The project follows an end-to-end robotics architecture from perception and plan
 
 | Layer | Platform / Technology | Responsibility | Status |
 |---|---|---|---|
-| High-computing | Orange Pi AI Pro 8GB | ROS 2, perception, SLAM, Nav2, system bridge | Complete through Navigation v1 |
+| High-computing | Orange Pi AI Pro 8GB | ROS 2, perception, SLAM, Nav2, CAN3 bridge | Complete through Navigation v1 and physical CAN FD |
 | AI acceleration | Ascend 310B4 | YOLOv8n inference | Frozen |
-| Real-time control | STM32G474RET6 + FreeRTOS | Safety, motor control, encoder, IMU, ADC, CAN | Active development |
+| Real-time control | STM32G474RET6 + FreeRTOS | Safety, motor control, encoder, IMU, ADC, CAN | M1-M3 physically accepted; Protocol v1 frozen |
 | Environment sensing | RPLIDAR A1 + Astra RGB-D | LaserScan, RGB, depth | Frozen |
-| Motion actuation | TB6612 + dual DC motors | Differential-drive actuation | Bring-up pending |
-| Feedback | Quadrature encoders + ICM-42688-P | Wheel state and inertial sensing | Bring-up pending |
+| Motion actuation | TB6612 + dual DC motors | Differential-drive actuation | Real control path and motor rotation verified |
+| Feedback | Quadrature encoders + ICM-42688-P | Wheel state and inertial sensing | Hardware acquisition verified |
 
 ## System Architecture
 
@@ -73,14 +73,17 @@ The project follows an end-to-end robotics architecture from perception and plan
 | Nav2 costmaps / global planning | Complete / Frozen |
 | STM32 hardware definition | Complete |
 | STM32 Pin Map v1 | Frozen |
-| STM32CubeMX baseline | In Progress |
-| Encoder / IMU / motor firmware | Planned |
-| CAN / CAN FD integration | Planned |
+| STM32 M1-M3 real-time foundation | Complete / Physically accepted |
+| Encoder / IMU / ADC / PWM / motor path | Complete / Physically accepted |
+| Communication Protocol v1 | Frozen; STM32 implementation complete |
+| Orange Pi CAN3 Device Tree and SocketCAN | Complete / Frozen |
+| CAN FD physical cross-domain link | Complete / Physically accepted |
+| Production ROS bridge | Implemented; defaults to `can3` and starts DISARMED |
 | Real wheel odometry | Planned |
 | Nav2 physical FollowPath | Planned |
 | Closed-loop autonomous navigation | Target |
 
-**Active engineering phase:** `STM32 REAL-TIME CONTROL DOMAIN`
+**Active engineering phase:** `STRAIGHT-DRIVE CLOSED-LOOP MOTION ACCEPTANCE`
 
 ## Hardware
 
@@ -132,7 +135,27 @@ Detailed hardware information: [Hardware Baseline and STM32 Pin Map](docs/hardwa
 | SYSCLK | 170 MHz |
 | Motor PWM | 10 kHz |
 | Debug UART | 115200 8N1 |
-| CAN nominal bring-up bitrate | 500 kbit/s |
+| CAN nominal bitrate | 500 kbit/s |
+| CAN FD data bitrate | 2 Mbit/s |
+
+### Accepted Orange Pi CAN3 production path
+
+| Item | Frozen / verified value |
+|---|---|
+| Controller | CAN3 / `822d0000.mttcan`, `mttcan-id=3` |
+| SocketCAN | `can3` |
+| TX | 40-pin pin 36 -> GPIO2_17 / CAN_TX3 |
+| RX | 40-pin pin 11 -> GPIO2_18 / CAN_RX3 |
+| Nominal timing | 500 kbit/s, 80.0% sample point |
+| Data timing | 2 Mbit/s, 82.5% Linux sample point |
+| Frame contract | CAN FD+BRS, Standard 11-bit IDs, little-endian |
+| Startup safety | Bridge starts DISARMED; `/cmd_vel` never arms motion |
+
+Real Protocol 1.0 traffic was accepted in both directions (`0x080`, `0x082`, and
+`0x180..0x183`) with SocketCAN Error Active, zero TX/RX errors, and zero bus-off events. CAN2 is a
+historical non-production path and is not used as a fallback.
+
+The frozen Linux <-> STM32 wire contract is [Communication Protocol v1](interfaces/protocol_v1.md).
 
 ## Repository Structure
 
@@ -220,9 +243,9 @@ during the transition from temporary SLAM-owned odometry to real wheel odometry.
 | 8 | FreeRTOS minimal runtime |
 | 9 | Safety supervisor + watchdog |
 | 10 | Controlled motor test |
-| 11 | Closed-loop wheel velocity |
-| 12 | FDCAN physical bring-up |
-| 13 | Shared CAN / CAN FD protocol v1 |
+| 11 | Shared CAN / CAN FD Protocol v1 — frozen |
+| 12 | FDCAN physical cross-domain bring-up |
+| 13 | Drivetrain calibration + closed-loop wheel velocity |
 | 14 | Orange Pi ↔ STM32 bridge |
 | 15 | Wheel odometry + real `/odom` |
 | 16 | Nav2 Controller / FollowPath |

@@ -10,12 +10,12 @@ RobotProject 是一套融合 **ROS 2、Ascend NPU、STM32 实时控制、LiDAR�
 
 | 层级 | 平台 / 技术 | 核心职责 | 状态 |
 |---|---|---|---|
-| 高算力域 | Orange Pi AI Pro 8GB | ROS 2、感知、SLAM、Nav2、系统桥接 | 已完成 Navigation v1 |
+| 高算力域 | Orange Pi AI Pro 8GB | ROS 2、感知、SLAM、Nav2、CAN3 桥接 | 已完成 Navigation v1 与物理 CAN FD |
 | AI 加速 | Ascend 310B4 | YOLOv8n 推理 | Frozen |
-| 实时控制域 | STM32G474RET6 + FreeRTOS | 安全、电机、编码器、IMU、ADC、CAN | 当前开发重点 |
+| 实时控制域 | STM32G474RET6 + FreeRTOS | 安全、电机、编码器、IMU、ADC、CAN | M1-M3 物理验收通过；Protocol v1 已冻结 |
 | 环境感知 | RPLIDAR A1 + Astra RGB-D | LaserScan、RGB、Depth | Frozen |
-| 运动执行 | TB6612 + 双路 DC Motor | 差速底盘驱动 | 待 Bring-up |
-| 状态反馈 | 正交编码器 + ICM-42688-P | 轮状态与惯性测量 | 待 Bring-up |
+| 运动执行 | TB6612 + 双路 DC Motor | 差速底盘驱动 | 真实控制链路与电机转动已验证 |
+| 状态反馈 | 正交编码器 + ICM-42688-P | 轮状态与惯性测量 | 硬件采集已验证 |
 
 ## 系统架构
 
@@ -73,14 +73,17 @@ RobotProject 是一套融合 **ROS 2、Ascend NPU、STM32 实时控制、LiDAR�
 | Nav2 Costmaps / Global Planning | Complete / Frozen |
 | STM32 Hardware Definition | Complete |
 | STM32 Pin Map v1 | Frozen |
-| STM32CubeMX Baseline | In Progress |
-| Encoder / IMU / Motor Firmware | Planned |
-| CAN / CAN FD Integration | Planned |
+| STM32 M1-M3 实时基础 | Complete / 物理验收通过 |
+| Encoder / IMU / ADC / PWM / Motor Path | Complete / 物理验收通过 |
+| Communication Protocol v1 | Frozen；STM32 实现完成 |
+| Orange Pi CAN3 Device Tree 与 SocketCAN | Complete / Frozen |
+| CAN FD 物理跨域链路 | Complete / 物理验收通过 |
+| Production ROS Bridge | 已实现；默认 `can3`，启动保持 DISARMED |
 | Real Wheel Odometry | Planned |
 | Nav2 Physical FollowPath | Planned |
 | Closed-loop Autonomous Navigation | Target |
 
-**当前工程阶段：** `STM32 REAL-TIME CONTROL DOMAIN`
+**当前工程阶段：** `STRAIGHT-DRIVE CLOSED-LOOP MOTION ACCEPTANCE`
 
 ## 硬件组成
 
@@ -132,7 +135,27 @@ RobotProject 是一套融合 **ROS 2、Ascend NPU、STM32 实时控制、LiDAR�
 | SYSCLK | 170 MHz |
 | Motor PWM | 10 kHz |
 | Debug UART | 115200 8N1 |
-| CAN Nominal Bring-up Bitrate | 500 kbit/s |
+| CAN Nominal Bitrate | 500 kbit/s |
+| CAN FD Data Bitrate | 2 Mbit/s |
+
+### 已验收的 Orange Pi CAN3 生产链路
+
+| 项目 | 冻结 / 已验证值 |
+|---|---|
+| Controller | CAN3 / `822d0000.mttcan`，`mttcan-id=3` |
+| SocketCAN | `can3` |
+| TX | 40Pin Pin 36 -> GPIO2_17 / CAN_TX3 |
+| RX | 40Pin Pin 11 -> GPIO2_18 / CAN_RX3 |
+| Nominal Timing | 500 kbit/s，80.0% Sample Point |
+| Data Timing | 2 Mbit/s，Linux 侧 82.5% Sample Point |
+| Frame Contract | CAN FD+BRS、Standard 11-bit ID、Little-endian |
+| 启动安全 | Bridge 启动保持 DISARMED；仅有 `/cmd_vel` 永远不会 Arm |
+
+真实 Protocol 1.0 双向帧（`0x080`、`0x082` 与 `0x180..0x183`）已通过验收；SocketCAN
+保持 Error Active，TX/RX Error 与 Bus-off 均为 0。CAN2 仅保留为历史非生产路径，禁止作为
+Fallback。
+
+冻结的 Linux <-> STM32 线协议见 [Communication Protocol v1](interfaces/protocol_v1.md)。
 
 ## 仓库结构
 
@@ -220,9 +243,9 @@ TF Authority。
 | 8 | FreeRTOS Minimal Runtime |
 | 9 | Safety Supervisor + Watchdog |
 | 10 | Controlled Motor Test |
-| 11 | Closed-loop Wheel Velocity |
-| 12 | FDCAN Physical Bring-up |
-| 13 | Shared CAN / CAN FD Protocol v1 |
+| 11 | Shared CAN / CAN FD Protocol v1 — 已冻结 |
+| 12 | FDCAN 物理跨域 Bring-up |
+| 13 | Drivetrain Calibration + Closed-loop Wheel Velocity |
 | 14 | Orange Pi ↔ STM32 Bridge |
 | 15 | Wheel Odometry + Real `/odom` |
 | 16 | Nav2 Controller / FollowPath |

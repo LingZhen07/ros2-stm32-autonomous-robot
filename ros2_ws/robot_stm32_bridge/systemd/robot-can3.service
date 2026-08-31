@@ -1,0 +1,13 @@
+[Unit]
+Description=RobotProject CAN3 production link
+After=local-fs.target systemd-modules-load.service
+Before=robot-stm32-bridge.service
+RequiresMountsFor=/data/ros2_ws
+
+[Service]
+Type=oneshot
+ExecStart=/data/ros2_ws/install/robot_stm32_bridge/lib/robot_stm32_bridge/configure_can3.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
