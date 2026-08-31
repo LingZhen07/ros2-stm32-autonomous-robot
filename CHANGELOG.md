@@ -1,6 +1,6 @@
 # CHANGELOG.md
 
-This file is the **cross-domain engineering communication log** for RobotProject.
+This file is the **cross-domain engineering communication log** for `ros2-stm32-autonomous-robot`.
 
 It is intentionally **English-only**.
 
@@ -22,6 +22,20 @@ Action required:
 ```
 
 ---
+
+## 2026-08-31T22:38:53+08:00 — M5 real-hardware demo accepted and public repository identity updated
+
+Domain: System
+Impact: M5 is complete on real hardware. Protocol 1.0 and all firmware/ROS runtime identifiers are unchanged; the public GitHub repository identity is now `LingZhen07/ros2-stm32-autonomous-robot`.
+
+Changed:
+- Firmware `0.5.4`, BODY_COMMAND_READY, Motion Authority, closed-loop wheel control, and the production CAN3 physical link passed the final integrated demo.
+- The accepted behavior is explicit START, 0.30 m/s straight closed-loop motion, RPLIDAR frontal obstacle detection in a 30° sector at 0.60 m, zero velocity plus authority withdrawal, STM32 safe stop, and latched STOPPED until a new explicit START.
+- Observed obstacle-detection intervals were approximately 0.075 ms to the zero velocity command, 1.276 ms to Motion Authority withdrawal, and 30.8 ms to STM32 stop confirmation. These are measured demo observations, not guaranteed worst-case safety limits.
+- The public repository name, bilingual documentation, and MIT licensing were updated without changing the frozen Protocol 1.0 contract or internal package/module names.
+
+Action required:
+- None
 
 ## 2026-08-31T09:02:05+08:00 — Orange Pi CAN3 physical link accepted and productionized
 

@@ -1,10 +1,7 @@
 std_msgs/Header header
 
-uint8 IDLE=0
-uint8 ARMING=1
-uint8 DRIVING=2
-uint8 STOPPED=3
-uint8 FAULT=4
+uint8 STOPPED=0
+uint8 RUNNING=1
 
 uint8 state
 string state_name

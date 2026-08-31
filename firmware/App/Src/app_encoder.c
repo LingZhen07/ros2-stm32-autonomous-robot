@@ -16,9 +16,11 @@ typedef struct
 
 static AppEncoderChannel g_encoders[APP_ENCODER_COUNT];
 static uint32_t g_last_sample_ms;
+static bool g_initialized;
 
 bool AppEncoder_Init(void)
 {
+  g_initialized = false;
   memset(g_encoders, 0, sizeof(g_encoders));
   g_encoders[APP_ENCODER_1].timer = &htim2;
   g_encoders[APP_ENCODER_2].timer = &htim3;
@@ -45,6 +47,7 @@ bool AppEncoder_Init(void)
     g_encoders[index].snapshot.valid = true;
   }
   g_last_sample_ms = HAL_GetTick();
+  g_initialized = true;
   AppState_ClearFault(APP_FAULT_ENCODER_VALIDITY);
   return true;
 }
@@ -53,6 +56,11 @@ void AppEncoder_Sample(uint32_t now_ms)
 {
   const uint32_t elapsed_ms = AppPlatform_ElapsedMs(now_ms, g_last_sample_ms);
 
+  if (!g_initialized)
+  {
+    AppState_SetFault(APP_FAULT_ENCODER_VALIDITY);
+    return;
+  }
   if (elapsed_ms == 0U)
   {
     return;
@@ -83,13 +91,17 @@ void AppEncoder_Sample(uint32_t now_ms)
     channel->snapshot.direction = (delta > 0) ? 1 : ((delta < 0) ? -1 : 0);
     channel->snapshot.timestamp_ms = now_ms;
     channel->snapshot.sample_age_ms = 0U;
-    channel->snapshot.valid = (elapsed_ms <= (APP_MOTOR_CONTROL_PERIOD_MS * 5U));
+    channel->snapshot.valid = (elapsed_ms <= APP_ENCODER_SAMPLE_VALIDITY_LIMIT_MS);
     channel->previous_counter = current;
     AppPlatform_IrqUnlock(key);
   }
 
   g_last_sample_ms = now_ms;
-  if ((elapsed_ms > (APP_MOTOR_CONTROL_PERIOD_MS * 5U)))
+  if (AppEncoder_AllValid(now_ms))
+  {
+    AppState_ClearFault(APP_FAULT_ENCODER_VALIDITY);
+  }
+  else
   {
     AppState_SetFault(APP_FAULT_ENCODER_VALIDITY);
   }
@@ -107,4 +119,31 @@ void AppEncoder_GetSnapshot(AppEncoderId id, uint32_t now_ms, AppEncoderSnapshot
   *snapshot = g_encoders[id].snapshot;
   AppPlatform_IrqUnlock(key);
   snapshot->sample_age_ms = AppPlatform_ElapsedMs(now_ms, snapshot->timestamp_ms);
+  if (snapshot->sample_age_ms > APP_ENCODER_SAMPLE_VALIDITY_LIMIT_MS)
+  {
+    snapshot->valid = false;
+  }
+}
+
+bool AppEncoder_AllValid(uint32_t now_ms)
+{
+  bool initialized;
+  bool encoder_1_valid;
+  bool encoder_2_valid;
+  uint32_t encoder_1_timestamp_ms;
+  uint32_t encoder_2_timestamp_ms;
+  const uint32_t key = AppPlatform_IrqLock();
+
+  initialized = g_initialized;
+  encoder_1_valid = g_encoders[APP_ENCODER_1].snapshot.valid;
+  encoder_2_valid = g_encoders[APP_ENCODER_2].snapshot.valid;
+  encoder_1_timestamp_ms = g_encoders[APP_ENCODER_1].snapshot.timestamp_ms;
+  encoder_2_timestamp_ms = g_encoders[APP_ENCODER_2].snapshot.timestamp_ms;
+  AppPlatform_IrqUnlock(key);
+
+  return initialized && encoder_1_valid && encoder_2_valid &&
+         (AppPlatform_ElapsedMs(now_ms, encoder_1_timestamp_ms) <=
+          APP_ENCODER_SAMPLE_VALIDITY_LIMIT_MS) &&
+         (AppPlatform_ElapsedMs(now_ms, encoder_2_timestamp_ms) <=
+          APP_ENCODER_SAMPLE_VALIDITY_LIMIT_MS);
 }

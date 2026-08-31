@@ -12,8 +12,8 @@ robot_stm32_bridge:
 straight_obstacle_stop_demo:
   ros__parameters:
     # Commissioning defaults only; these are not frozen robot safety specifications.
-    forward_speed_mps: 0.05
-    stop_distance_m: 0.35
+    forward_speed_mps: 0.30
+    stop_distance_m: 0.60
     front_sector_deg: 30.0
     # Frozen base_link -> laser_frame yaw is pi, so robot-forward is 180 degrees in /scan.
     front_center_deg: 180.0

@@ -1,283 +1,101 @@
-# RobotProject
+# ros2-stm32-autonomous-robot
 
 [English](README.md)
 
-RobotProject 是一套融合 **ROS 2、Ascend NPU、STM32 实时控制、LiDAR、RGB-D 与 CAN/CAN FD** 的异构自主移动机器人系统。
+这是一套异构自主移动机器人系统：Orange Pi AI Pro 运行 ROS 2 Humble，STM32G474 负责实时
+控制。系统将 LiDAR/RGB-D 感知、SLAM 与 Nav2，同 CAN FD 底盘桥接、轮速闭环控制和分层运动
+安全机制集成在一起。
 
-系统覆盖从感知、建图、规划到实时运动控制、轮速反馈和物理闭环的完整链路。
+## 技术栈
 
-## 项目概览
-
-| 层级 | 平台 / 技术 | 核心职责 | 状态 |
-|---|---|---|---|
-| 高算力域 | Orange Pi AI Pro 8GB | ROS 2、感知、SLAM、Nav2、CAN3 桥接 | 已完成 Navigation v1 与物理 CAN FD |
-| AI 加速 | Ascend 310B4 | YOLOv8n 推理 | Frozen |
-| 实时控制域 | STM32G474RET6 + FreeRTOS | 安全、电机、编码器、IMU、ADC、CAN | M1-M3 物理验收通过；Protocol v1 已冻结 |
-| 环境感知 | RPLIDAR A1 + Astra RGB-D | LaserScan、RGB、Depth | Frozen |
-| 运动执行 | TB6612 + 双路 DC Motor | 差速底盘驱动 | 真实控制链路与电机转动已验证 |
-| 状态反馈 | 正交编码器 + ICM-42688-P | 轮状态与惯性测量 | 硬件采集已验证 |
+| 域 | 硬件 / 软件 | 职责 |
+|---|---|---|
+| 高算力域 | Orange Pi AI Pro 8GB、Ubuntu 22.04、ROS 2 Humble | 感知、SLAM、Nav2、命令监督与日志 |
+| AI 加速 | Ascend 310B4 | YOLOv8n 推理 |
+| 实时控制域 | STM32G474RET6、FreeRTOS、固件 `0.5.4` | 命令校验、安全、轮速控制、传感器与遥测 |
+| 环境感知 | RPLIDAR A1、Astra RGB-D | 真实 `/scan`、RGB 与深度输入 |
+| 底盘 | TB6612、双路直流电机、正交编码器 | 差速驱动与反馈 |
+| 传输 | TJA1042/TJA1043 系列收发器、SocketCAN `can3` | 已冻结 Protocol 1.0 CAN FD 链路 |
 
 ## 系统架构
 
-| 阶段 | 输入 | 处理域 / 所有者 | 输出 |
-|---|---|---|---|
-| 感知 | RGB-D、LiDAR | Orange Pi + Ascend 310B4 | 障碍物与传感器数据 |
-| 建图 | `/scan`、TF | Cartographer | `/map`、SLAM 位姿 |
-| 导航 | Goal、Map、Costmap | Nav2 | `geometry_msgs/msg/Twist` |
-| 传输 | 机体速度命令 | Linux ↔ MCU Bridge | CAN / CAN FD 帧 |
-| 实时控制 | 已校验的 `v`、`ω` | STM32G474RET6 | 左右轮目标速度 |
-| 执行 | 轮速目标 | PWM + TB6612 | 电机输出与机器人运动 |
-| 反馈 | Encoder、IMU、Battery ADC | STM32G474RET6 | Telemetry 与轮状态 |
-| 里程计 | 轮状态 | Orange Pi Bridge | `nav_msgs/msg/Odometry`、`/odom` |
-| 闭环 | `/odom`、LaserScan、Costmap | Nav2 Controller | 连续路径跟随 |
+```text
+RPLIDAR / RGB-D ──> ROS 2 感知、SLAM 与 Nav2 ──> geometry_msgs/Twist
+                                                       │
+                                                       v
+                              Orange Pi 安全/Demo 监督 + CAN FD Bridge
+                                                       │
+                                           can3 上的 Protocol 1.0
+                                                       │
+                                                       v
+                              STM32 安全 + 差速转换 + 左右轮闭环控制
+                                                       │
+                                                       v
+                                      TB6612 + 电机 + 编码器反馈
+```
 
-### 命令链路
+生产 CAN FD 接口为 `can3`：Nominal 500 kbit/s、Sample Point `0.800`；Data 2 Mbit/s、Data
+Sample Point `0.825`。Protocol 1.0 保持冻结，真实硬件已验证 `BODY_COMMAND_READY = TRUE`。
 
-| 步骤 | 接口 |
-|---:|---|
-| 1 | Navigation Goal |
-| 2 | Nav2 Planner / Controller |
-| 3 | `geometry_msgs/msg/Twist` |
-| 4 | Orange Pi Transport Bridge |
-| 5 | CAN / CAN FD |
-| 6 | STM32 Command Validation |
-| 7 | Differential-drive Wheel Targets |
-| 8 | Closed-loop Wheel Control |
-| 9 | 机器人实际运动 |
+## 已演示能力
 
-### 反馈链路
+- Orange Pi AI Pro ROS 2 Humble 高算力栈与 RPLIDAR A1 真实 `/scan` 输入。
+- 真实 CAN3 双向物理链路与 Protocol 1.0 Motion Authority 握手。
+- STM32G474 固件 `0.5.4` 左右轮闭环控制与确定性 Safe Stop。
+- 当前 `0.30 m/s` Commissioning Limit 下的直行运动验收。
+- 30° 前方 LiDAR 扇区与 `0.60 m` 停车阈值。
+- 实机 Obstacle STOP、Zero Velocity、Motion Authority Withdrawal、STM32 Stop Confirmation 和
+  STOPPED 锁存行为全部通过。
 
-| 步骤 | 接口 |
-|---:|---|
-| 1 | Encoder Counts + IMU + System Telemetry |
-| 2 | STM32 Wheel-state Estimation |
-| 3 | CAN / CAN FD |
-| 4 | Orange Pi Transport Bridge |
-| 5 | `nav_msgs/msg/Odometry` |
-| 6 | `/odom` 与 `odom → base_link` |
-| 7 | Nav2 Controller Feedback |
+`0.30 m/s` 是当前电气与供电约束下已验收的最高 Commissioning Speed，不代表机器人物理
+最高速度。
 
-## 当前进度
+## M5 实机验收
 
-| 子系统 | 状态 |
-|---|---|
-| Orange Pi / Ubuntu / Vendor BSP | Complete |
-| Ascend 310B4 Baseline | Complete / Frozen |
-| ROS 2 Humble Foundation | Complete / Frozen |
-| Astra RGB-D | Complete / Frozen |
-| YOLOv8n Ascend Inference | Working / Frozen |
-| RPLIDAR A1 | Complete / Frozen |
-| TF System v1 | Complete / Frozen |
-| rosbag2 / Diagnostics | Complete / Frozen |
-| Cartographer LiDAR SLAM v1 | Complete / Frozen |
-| Nav2 Costmaps / Global Planning | Complete / Frozen |
-| STM32 Hardware Definition | Complete |
-| STM32 Pin Map v1 | Frozen |
-| STM32 M1-M3 实时基础 | Complete / 物理验收通过 |
-| Encoder / IMU / ADC / PWM / Motor Path | Complete / 物理验收通过 |
-| Communication Protocol v1 | Frozen；STM32 实现完成 |
-| Orange Pi CAN3 Device Tree 与 SocketCAN | Complete / Frozen |
-| CAN FD 物理跨域链路 | Complete / 物理验收通过 |
-| Production ROS Bridge | 已实现；默认 `can3`，启动保持 DISARMED |
-| Real Wheel Odometry | Planned |
-| Nav2 Physical FollowPath | Planned |
-| Closed-loop Autonomous Navigation | Target |
+**状态：PASS**
 
-**当前工程阶段：** `STRAIGHT-DRIVE CLOSED-LOOP MOTION ACCEPTANCE`
+```text
+显式 START
+→ 0.30 m/s 直行闭环运动
+→ RPLIDAR 前方障碍物检测
+→ Zero Velocity + Motion Authority Withdrawal
+→ STM32 Safe Stop
+→ STOPPED 锁存
+→ 必须显式 START 才能再次运动
+```
 
-## 硬件组成
+障碍物移除后 STOP 仍保持锁存；只有用户重新发出显式 START，系统才能恢复运动。
 
-### 高算力域
+成功 Demo 中的观测值：
 
-| 组件 | 角色 |
-|---|---|
-| Orange Pi AI Pro 8GB | ROS 2 主机与高层计算 |
-| Ascend 310B4 | NPU 推理加速 |
-| Astra RGB-D | RGB 与深度感知 |
-| RPLIDAR A1 | 2D 激光雷达 |
-
-### 实时控制域
-
-| 组件 | 角色 |
-|---|---|
-| STM32G474RET6 | 实时控制器 |
-| DeveBox STM32G474R Ver:20 | MCU 开发板 |
-| ICM-42688-P | 6 轴 IMU |
-| TB6612 双路 DC Motor Driver | 电机 H 桥 |
-| TJA1042/TJA1043 系列模块 | CAN 物理层 |
-| 正交编码器 | 轮速反馈 |
-| 12 V Battery | 电机供电 |
-
-详细信息见：[硬件基线与 STM32 Pin Map](docs/hardware.zh-CN.md)
-
-## STM32 Pin Map v1
-
-| 功能 | Pin | Peripheral |
-|---|---|---|
-| Encoder 1 A/B | PA0 / PA1 | TIM2 |
-| Debug UART TX/RX | PA2 / PA3 | USART2 |
-| IMU CS | PA4 | GPIO |
-| IMU SPI | PA5 / PA6 / PA7 | SPI1 |
-| Motor PWM A/B | PA8 / PA9 | TIM1 |
-| CAN RX/TX | PA11 / PA12 | FDCAN1 |
-| SWD | PA13 / PA14 | SWD |
-| Battery ADC | PC0 | ADC1_IN6 |
-| IMU INT1/INT2 | PC4 / PC5 | EXTI |
-| Encoder 2 A/B | PC6 / PC7 | TIM3 |
-| Motor STBY | PC8 | GPIO |
-| Motor Direction | PB12–PB15 | GPIO |
-
-### 控制基线
-
-| 参数 | 数值 |
+| 事件区间 | 观测时间 |
 |---|---:|
-| HSE | 8 MHz |
-| SYSCLK | 170 MHz |
-| Motor PWM | 10 kHz |
-| Debug UART | 115200 8N1 |
-| CAN Nominal Bitrate | 500 kbit/s |
-| CAN FD Data Bitrate | 2 Mbit/s |
+| Obstacle Detection → Zero Velocity Command | 约 `0.075 ms` |
+| Obstacle Detection → Motion Authority Withdrawal | 约 `1.276 ms` |
+| Obstacle Detection → STM32 Stop Confirmation | 约 `30.8 ms` |
 
-### 已验收的 Orange Pi CAN3 生产链路
+以上数据是本次成功实机验收的观测测量值，不是有保证的最坏情况安全上限。
 
-| 项目 | 冻结 / 已验证值 |
+## 文档与设置
+
+| 资源 | 内容 |
 |---|---|
-| Controller | CAN3 / `822d0000.mttcan`，`mttcan-id=3` |
-| SocketCAN | `can3` |
-| TX | 40Pin Pin 36 -> GPIO2_17 / CAN_TX3 |
-| RX | 40Pin Pin 11 -> GPIO2_18 / CAN_RX3 |
-| Nominal Timing | 500 kbit/s，80.0% Sample Point |
-| Data Timing | 2 Mbit/s，Linux 侧 82.5% Sample Point |
-| Frame Contract | CAN FD+BRS、Standard 11-bit ID、Little-endian |
-| 启动安全 | Bridge 启动保持 DISARMED；仅有 `/cmd_vel` 永远不会 Arm |
+| [文档索引](docs/README.zh-CN.md) | 中英双语工程知识库 |
+| [ROS Bridge 与 M5 Demo](docs/ros_bridge.zh-CN.md) | 构建、生产 CAN3 启动、ROS 接口、Demo 流程与证据 |
+| [STM32 生产固件](docs/firmware.zh-CN.md) | 固件构建、架构、安全与验收边界 |
+| [硬件基线](docs/hardware.zh-CN.md) | 硬件定义与冻结的 STM32 Pin Map |
+| [Protocol 1.0](interfaces/protocol_v1.md) | 冻结的 Linux ↔ STM32 线协议 |
 
-真实 Protocol 1.0 双向帧（`0x080`、`0x082` 与 `0x180..0x183`）已通过验收；SocketCAN
-保持 Error Active，TX/RX Error 与 Bus-off 均为 0。CAN2 仅保留为历史非生产路径，禁止作为
-Fallback。
+克隆正式仓库：
 
-冻结的 Linux <-> STM32 线协议见 [Communication Protocol v1](interfaces/protocol_v1.md)。
-
-## 仓库结构
-
-```text
-RobotProject/
-├── firmware/          STM32 firmware
-├── ros2_ws/           ROS 2 packages 与高算力软件
-├── interfaces/        Linux ↔ STM32 通信合同
-├── docs/              中英双语工程知识库
-├── AGENTS.md          Codex 共享工程规则
-├── CHANGELOG.md       跨域工程变更通信
-├── README.md          英文项目主页
-└── README.zh-CN.md    中文项目主页
+```bash
+git clone git@github.com:LingZhen07/ros2-stm32-autonomous-robot.git
+cd ros2-stm32-autonomous-robot
 ```
 
-两个 Codex CLI 并行协作：
-
-| Agent | 主要工作域 | 运行环境 |
-|---|---|---|
-| Firmware Codex | `firmware/` | Windows 本地 STM32 开发 |
-| ROS Codex | `ros2_ws/` | SSH 连接 Orange Pi |
-
-共享信息通过 `interfaces/`、`docs/` 与 `CHANGELOG.md` 同步。
-
-## 工程流程
-
-| 阶段 | 验收原则 |
-|---|---|
-| Inspect | 读取真实硬件与实际运行环境 |
-| Implement | 完成最小有效子系统 |
-| Verify | 获取真实电气与软件证据 |
-| Stabilize | 修复已观察到的问题 |
-| Accept | 记录可测量的通过条件 |
-| Freeze | 固化已工作的模块 |
-| Integrate | 推进到下一个系统边界 |
-
-### 硬件验收证据
-
-| 子系统 | 验收证据 |
-|---|---|
-| Encoder | 实际转轮产生连续、方向一致的计数 |
-| IMU | 有效 `WHO_AM_I` 与真实运动数据 |
-| PWM | 实测 10 kHz 波形与目标 Duty |
-| CAN | 真实 TX/RX Frame |
-| Motor | 受控运动与可靠 Safe Stop |
-| Odometry | 真实位移能够定量反映到 `/odom` |
-| Navigation | 实机完成避障并到达目标位置 |
-
-## Navigation 与 Odometry
-
-Nav2 速度命令：
-
-```text
-linear.x  [m/s]
-angular.z [rad/s]
-```
-
-STM32 负责命令校验和 Differential-drive Wheel Target 计算。
-
-轮状态经 Linux Bridge 转换为：
-
-```text
-nav_msgs/msg/Odometry
-```
-
-Wheel Odometry 接管后，系统保持唯一的：
-
-```text
-odom → base_link
-```
-
-TF Authority。
-
-## 开发路线
-
-| 阶段 | 里程碑 |
-|---:|---|
-| 1 | STM32CubeMX Baseline |
-| 2 | SWD + Safe GPIO Startup |
-| 3 | USART2 Debug Bring-up |
-| 4 | Battery ADC Verification |
-| 5 | TIM2 / TIM3 Encoder Bring-up |
-| 6 | ICM-42688-P SPI + Interrupt Bring-up |
-| 7 | TIM1 10 kHz PWM Verification |
-| 8 | FreeRTOS Minimal Runtime |
-| 9 | Safety Supervisor + Watchdog |
-| 10 | Controlled Motor Test |
-| 11 | Shared CAN / CAN FD Protocol v1 — 已冻结 |
-| 12 | FDCAN 物理跨域 Bring-up |
-| 13 | Drivetrain Calibration + Closed-loop Wheel Velocity |
-| 14 | Orange Pi ↔ STM32 Bridge |
-| 15 | Wheel Odometry + Real `/odom` |
-| 16 | Nav2 Controller / FollowPath |
-| 17 | Closed-loop Autonomous Navigation |
-| 18 | Obstacle Avoidance + Target-reaching Acceptance |
-
-## 文档入口
-
-| 文档 | 内容 |
-|---|---|
-| [Hardware Baseline / Pin Map](docs/hardware.md) | 英文硬件定义与 MCU 资源表 |
-| [硬件基线 / Pin Map](docs/hardware.zh-CN.md) | 中文硬件知识库 |
-| `interfaces/` | 跨域 Transport / Protocol 合同 |
-| `CHANGELOG.md` | 需要另一个 Codex 同步知晓的跨域变更 |
-| `AGENTS.md` | Codex 强制工程规则 |
-
-## 项目能力覆盖
-
-项目最终展示以下工程能力：
-
-- STM32G4 / FreeRTOS
-- Motor / Encoder Closed-loop Control
-- IMU / ADC Integration
-- CAN / CAN FD
-- Embedded Safety / Watchdog
-- Embedded Linux + MCU Heterogeneous System
-- ROS 2 / Nav2
-- LiDAR SLAM
-- Ascend NPU Perception
-- Real Wheel Odometry
-- End-to-end Autonomous Navigation
+内部 ROS Package、Firmware Module、Executable 与冻结的 Protocol Identifier 保留原名；GitHub
+仓库更名不会改变运行时合同。
 
 ## License
 
-TBD.
+Copyright (c) 2026 Ling Zhen。本项目采用 [MIT License](LICENSE)。

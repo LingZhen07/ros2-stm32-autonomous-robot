@@ -1,5 +1,6 @@
 #include "app_control.h"
 
+#include "app_config.h"
 #include "app_platform.h"
 #include "app_state.h"
 
@@ -36,7 +37,26 @@ static bool AppControl_ConfigValid(const AppControllerConfig *config)
          isfinite(config->kp) && isfinite(config->ki) && isfinite(config->kd) &&
          isfinite(config->integrator_limit) && (config->integrator_limit >= 0.0f) &&
          isfinite(config->output_limit) && (config->output_limit > 0.0f) &&
-         (config->output_limit <= 1.0f);
+         (config->output_limit <= 1.0f) &&
+         isfinite(config->target_ramp_rate_cps2) &&
+         (config->target_ramp_rate_cps2 > 0.0f);
+}
+
+static float AppControl_RampTarget(float current, float requested,
+                                   float rate_cps2, float dt_seconds)
+{
+  const float max_delta = rate_cps2 * dt_seconds;
+  const float delta = requested - current;
+
+  if (delta > max_delta)
+  {
+    return current + max_delta;
+  }
+  if (delta < -max_delta)
+  {
+    return current - max_delta;
+  }
+  return requested;
 }
 
 static bool AppControl_UpdateOne(AppController *controller, float target, float measured,
@@ -46,6 +66,7 @@ static bool AppControl_UpdateOne(AppController *controller, float target, float 
   float derivative;
   float candidate_integrator;
   float unclamped;
+  float ramped_target;
   bool saturated = false;
 
   if (!AppControl_ConfigValid(&controller->config) || !isfinite(target) ||
@@ -54,7 +75,10 @@ static bool AppControl_UpdateOne(AppController *controller, float target, float 
     return false;
   }
 
-  error = target - measured;
+  ramped_target = AppControl_RampTarget(controller->snapshot.target, target,
+                                        controller->config.target_ramp_rate_cps2,
+                                        dt_seconds);
+  error = ramped_target - measured;
   derivative = (error - controller->previous_error) / dt_seconds;
   candidate_integrator = controller->snapshot.integrator + (error * dt_seconds);
   if (candidate_integrator > controller->config.integrator_limit)
@@ -77,7 +101,7 @@ static bool AppControl_UpdateOne(AppController *controller, float target, float 
     controller->snapshot.integrator = candidate_integrator;
   }
 
-  controller->snapshot.target = target;
+  controller->snapshot.target = ramped_target;
   controller->snapshot.measured = measured;
   controller->snapshot.error = error;
   controller->snapshot.output = *output;
@@ -90,9 +114,33 @@ static bool AppControl_UpdateOne(AppController *controller, float target, float 
 
 void AppControl_Init(void)
 {
+  const AppControllerConfig left_config = {
+    .kp = APP_CONTROL_LEFT_KP,
+    .ki = APP_CONTROL_LEFT_KI,
+    .kd = APP_CONTROL_LEFT_KD,
+    .integrator_limit = APP_CONTROL_INTEGRATOR_LIMIT,
+    .output_limit = APP_CONTROL_OUTPUT_LIMIT,
+    .target_ramp_rate_cps2 = APP_CONTROL_TARGET_RAMP_RATE_CPS2,
+    .configured = true
+  };
+  const AppControllerConfig right_config = {
+    .kp = APP_CONTROL_RIGHT_KP,
+    .ki = APP_CONTROL_RIGHT_KI,
+    .kd = APP_CONTROL_RIGHT_KD,
+    .integrator_limit = APP_CONTROL_INTEGRATOR_LIMIT,
+    .output_limit = APP_CONTROL_OUTPUT_LIMIT,
+    .target_ramp_rate_cps2 = APP_CONTROL_TARGET_RAMP_RATE_CPS2,
+    .configured = true
+  };
   const uint32_t key = AppPlatform_IrqLock();
   memset(g_controllers, 0, sizeof(g_controllers));
   AppPlatform_IrqUnlock(key);
+
+  if (!AppControl_SetConfig(APP_CONTROLLER_LEFT, &left_config) ||
+      !AppControl_SetConfig(APP_CONTROLLER_RIGHT, &right_config))
+  {
+    AppState_SetFault(APP_FAULT_INTERNAL_CONFIGURATION);
+  }
 }
 
 bool AppControl_SetConfig(AppControllerId id, const AppControllerConfig *config)

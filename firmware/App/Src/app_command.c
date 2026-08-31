@@ -118,6 +118,7 @@ void AppCommand_GetSnapshot(uint32_t now_ms, AppCommandSnapshot *snapshot)
   }
   else
   {
+    /* A disarmed/disabled command is an intentional safe state, not a timeout. */
     snapshot->fresh = false;
     snapshot->timed_out = false;
   }

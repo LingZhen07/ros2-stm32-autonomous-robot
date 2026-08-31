@@ -1,8 +1,8 @@
-# RobotProject 项目文档
+# ros2-stm32-autonomous-robot 项目文档
 
 [English](README.md)
 
-`docs/` 是 RobotProject 的长期工程知识库。
+`docs/` 是 `ros2-stm32-autonomous-robot` 的长期工程知识库。
 
 ## 文档索引
 

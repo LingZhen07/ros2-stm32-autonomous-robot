@@ -43,7 +43,15 @@ static bool AppRuntime_GeneratedBaselineValid(void)
                          (hspi1.Init.NSS == SPI_NSS_SOFT);
   const bool fdcan_valid = (hfdcan1.Init.NominalPrescaler == 17U) &&
                            (hfdcan1.Init.NominalTimeSeg1 == 15U) &&
-                           (hfdcan1.Init.NominalTimeSeg2 == 4U);
+                           (hfdcan1.Init.NominalTimeSeg2 == 4U) &&
+                           (hfdcan1.Init.NominalSyncJumpWidth == 4U) &&
+                           (hfdcan1.Init.DataPrescaler == 5U) &&
+                           (hfdcan1.Init.DataTimeSeg1 == 13U) &&
+                           (hfdcan1.Init.DataTimeSeg2 == 3U) &&
+                           (hfdcan1.Init.DataSyncJumpWidth == 3U) &&
+                           (hfdcan1.Init.FrameFormat == FDCAN_FRAME_FD_BRS) &&
+                           (hfdcan1.Init.AutoRetransmission == ENABLE) &&
+                           (hfdcan1.Init.StdFiltersNbr == 1U);
 
   return (HAL_RCC_GetSysClockFreq() == APP_SYSCLK_HZ) && safe_gpio && pwm_safe &&
          encoders_16_bit && uart_valid && spi_valid && fdcan_valid;

@@ -2,7 +2,7 @@
 
 [中文版本](hardware.zh-CN.md)
 
-This document records the persistent hardware baseline for RobotProject.
+This document records the persistent hardware baseline for `ros2-stm32-autonomous-robot`.
 
 ## Status Convention
 

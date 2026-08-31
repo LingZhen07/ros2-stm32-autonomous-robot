@@ -2,7 +2,7 @@
 
 [English Version](hardware.md)
 
-本文档维护 RobotProject 的长期硬件基线。
+本文档维护 `ros2-stm32-autonomous-robot` 的长期硬件基线。
 
 ## 状态定义
 

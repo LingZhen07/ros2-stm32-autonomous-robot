@@ -1,6 +1,7 @@
 #include "app_rtos.h"
 
 #include "app_battery.h"
+#include "app_can.h"
 #include "app_command.h"
 #include "app_config.h"
 #include "app_control.h"
@@ -9,6 +10,7 @@
 #include "app_encoder.h"
 #include "app_imu.h"
 #include "app_motor.h"
+#include "app_platform.h"
 #include "app_safety.h"
 #include "app_state.h"
 #include "app_supervisor.h"
@@ -54,7 +56,11 @@ bool AppRtos_InitObjects(void)
 {
   if (!AppDiagnostics_Init())
   {
-    AppState_SetFault(APP_FAULT_INTERNAL_CONFIGURATION);
+    AppState_SetFault(APP_FAULT_RTOS_MALLOC_FAILURE);
+    return false;
+  }
+  if (!AppCan_Init())
+  {
     return false;
   }
   return true;
@@ -68,6 +74,7 @@ bool AppRtos_CreateThreads(void)
                                       &g_communication_task_attributes);
   g_telemetry_task = osThreadNew(AppRtos_TelemetryTask, NULL, &g_telemetry_task_attributes);
   AppImu_RegisterTask(g_imu_task);
+  AppCan_RegisterTask(g_communication_task);
 
   if ((g_motor_task == NULL) || (g_imu_task == NULL) ||
       (g_communication_task == NULL) || (g_telemetry_task == NULL))
@@ -96,7 +103,7 @@ static void AppRtos_MotorTask(void *argument)
     float right_output;
     float motor_a;
     float motor_b;
-    const uint32_t now_ms = osKernelGetTickCount();
+    const uint32_t now_ms = HAL_GetTick();
 
     AppEncoder_Sample(now_ms);
     if (!AppSafety_ValidateActiveCommand(now_ms, &command))
@@ -153,24 +160,26 @@ static void AppRtos_ImuTask(void *argument)
   AppImu_RegisterTask(osThreadGetId());
   for (;;)
   {
+    uint32_t now_ms;
     (void)osThreadFlagsWait(0x7FFFFFFFUL, osFlagsWaitAny, APP_IMU_TASK_WAIT_MS);
-    (void)AppImu_Service(osKernelGetTickCount());
-    AppSupervisor_ReportTask(APP_RUNTIME_TASK_IMU, osKernelGetTickCount());
+    now_ms = HAL_GetTick();
+    (void)AppImu_Service(now_ms);
+    AppSupervisor_ReportTask(APP_RUNTIME_TASK_IMU, now_ms);
   }
 }
 
 static void AppRtos_CommunicationTask(void *argument)
 {
-  uint32_t next_tick = osKernelGetTickCount();
   (void)argument;
 
   for (;;)
   {
-    const uint32_t now_ms = osKernelGetTickCount();
-    AppDiagnostics_Process();
+    const uint32_t now_ms = HAL_GetTick();
+    AppCan_Process(now_ms);
+    AppDiagnostics_Process(now_ms);
     AppSupervisor_ReportTask(APP_RUNTIME_TASK_COMMUNICATION, now_ms);
-    next_tick += APP_COMMUNICATION_PERIOD_MS;
-    (void)osDelayUntil(next_tick);
+    (void)osThreadFlagsWait(APP_CAN_TASK_FLAG_EVENT, osFlagsWaitAny,
+                            APP_COMMUNICATION_PERIOD_MS);
   }
 }
 
@@ -178,21 +187,15 @@ static void AppRtos_TelemetryTask(void *argument)
 {
   uint32_t next_tick = osKernelGetTickCount();
   uint32_t last_battery_ms = 0U;
-  uint32_t last_diagnostic_ms = 0U;
   (void)argument;
 
   for (;;)
   {
-    const uint32_t now_ms = osKernelGetTickCount();
+    const uint32_t now_ms = HAL_GetTick();
     if ((now_ms - last_battery_ms) >= APP_BATTERY_SAMPLE_PERIOD_MS)
     {
       (void)AppBattery_Sample(now_ms);
       last_battery_ms = now_ms;
-    }
-    if ((now_ms - last_diagnostic_ms) >= APP_DIAGNOSTIC_PERIOD_MS)
-    {
-      AppDiagnostics_EmitPeriodic(now_ms);
-      last_diagnostic_ms = now_ms;
     }
     AppSupervisor_ReportTask(APP_RUNTIME_TASK_TELEMETRY, now_ms);
     next_tick += APP_TELEMETRY_PERIOD_MS;
@@ -207,7 +210,7 @@ void AppRtos_SupervisorTask(void *argument)
 
   for (;;)
   {
-    AppSupervisor_RunCycle(osKernelGetTickCount());
+    AppSupervisor_RunCycle(HAL_GetTick());
     next_tick += APP_SUPERVISOR_PERIOD_MS;
     (void)osDelayUntil(next_tick);
   }

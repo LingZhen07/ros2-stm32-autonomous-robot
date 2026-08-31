@@ -1,8 +1,8 @@
-# RobotProject Documentation
+# ros2-stm32-autonomous-robot Documentation
 
 [中文](README.zh-CN.md)
 
-`docs/` is the persistent engineering knowledge base for RobotProject.
+`docs/` is the persistent engineering knowledge base for `ros2-stm32-autonomous-robot`.
 
 ## Document Map
 

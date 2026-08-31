@@ -15,6 +15,7 @@
 #define ICM42688_REG_PWR_MGMT0       0x4EU
 #define ICM42688_REG_GYRO_CONFIG0    0x4FU
 #define ICM42688_REG_ACCEL_CONFIG0   0x50U
+#define ICM42688_REG_INT_CONFIG1     0x64U
 #define ICM42688_REG_INT_SOURCE0     0x65U
 #define ICM42688_REG_WHO_AM_I        0x75U
 #define ICM42688_REG_BANK_SEL        0x76U
@@ -27,6 +28,7 @@
 #define ICM42688_ACCEL_4G_100HZ      0x48U
 #define ICM42688_GYRO_500DPS_100HZ   0x48U
 #define ICM42688_ACCEL_GYRO_LOW_NOISE 0x0FU
+#define ICM42688_INT_ASYNC_RESET_DISABLED 0x00U
 #define APP_IMU_THREAD_FLAG_DATA_READY (1UL << 0)
 
 #define APP_STANDARD_GRAVITY_MPS2 9.80665f
@@ -98,7 +100,9 @@ static bool AppImu_InitializeDevice(void)
     goto failure;
   }
   HAL_Delay(50U);
-  if (!AppImu_WriteRegister(ICM42688_REG_INT_SOURCE0, ICM42688_UI_DATA_READY_INT1))
+  if (!AppImu_WriteRegister(ICM42688_REG_INT_CONFIG1,
+                            ICM42688_INT_ASYNC_RESET_DISABLED) ||
+      !AppImu_WriteRegister(ICM42688_REG_INT_SOURCE0, ICM42688_UI_DATA_READY_INT1))
   {
     goto failure;
   }

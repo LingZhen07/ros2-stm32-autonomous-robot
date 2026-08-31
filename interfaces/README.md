@@ -1,4 +1,4 @@
-# RobotProject Shared Interfaces
+# ros2-stm32-autonomous-robot Shared Interfaces
 
 This directory is the authoritative Linux <-> STM32 communication-contract layer.
 

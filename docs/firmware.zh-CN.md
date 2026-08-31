@@ -10,10 +10,10 @@
 | M2 外设基础 | `VERIFIED` | 真实 ADC、Encoder、ICM-42688-P、TIM1 PWM 行为 |
 | M3 实时控制基础 | `VERIFIED` | FreeRTOS、安全、看门狗架构、TB6612 链路与真实电机转动 |
 | M4 Protocol v1 + FDCAN 固件 | `FROZEN / PHYSICALLY INTEGRATED` | 共享合同、固件集成与 Orange Pi CAN3 真实链路均已验收 |
-| M5 固件侧跨域支持 | `READY FOR STRAIGHT-DRIVE ACCEPTANCE` | BODY_VELOCITY 底盘/控制配置完成；闭环物理性能仍待实测 |
+| M5 实机集成 | `VERIFIED / PASS` | BODY_COMMAND_READY、Motion Authority、0.30 m/s 闭环直行、LiDAR Stop、撤权与 STM32 Safe Stop 均已验收 |
 
-M1-M3 已完成真实硬件验收；M4 现也具备跨域真实 CAN FD 证据，但这不代表后续直行运动演示
-已经验收。
+M1-M5 已完成真实硬件验收。Protocol 1.0 保持冻结，生产传输保持 Orange Pi CAN3 / SocketCAN
+`can3`。
 
 ## MCU 基线
 
@@ -238,13 +238,12 @@ Orange Pi 拥有 `nav_msgs/msg/Odometry`，并在后续负责唯一 `odom -> bas
 Sample Point 后保持 Error Active，TX/RX Error 与 Bus-off 均为 0。Protocol 1.0、STM32 Timing
 和机器人默认 DISARMED 行为均未改变。
 
-下一运动阶段仍需：
+最终 M5 实机 Demo 已使用固件 `0.5.4` 通过：BODY_COMMAND_READY 与 Motion Authority 均确认，
+系统以当前 0.30 m/s Commissioning Limit 进行闭环直行；真实 RPLIDAR A1 `/scan` 在 30° 前方
+扇区和 0.60 m 阈值内检出障碍物后，触发 Zero Velocity、Authority Withdrawal 与 STM32 Safe
+Stop。障碍物移除后 STOPPED 仍锁存，必须由用户重新显式 START 才能恢复运动。该验收速度不代表
+机器人物理最高速度。
 
-- 使用真实直线和旋转运动验证 Commissioning Radius/Track；
-- 物理验证从 0.05 到 0.30 m/s 调试范围内的稳定闭环跟踪，且无持续饱和或明显左右发散；
-- 验证真实 Authority Withdrawal 能迅速停止物理运动；
-- 然后才把已验收的直行控制链接入 `/scan` 遇障停止 Demo。
-
-M5 固件在所有运行时 Health/Safety Guard 有效时，会以 Motor Mapping、Wheel Control 和
-BODY_COMMAND_READY 已启用的配置启动。这是可直接交接 Orange Pi 集成的状态，不代表闭环物理
-验收已经通过；下一项且唯一的固件验收门是上述受控直行测试。
+从 Obstacle Detection 起，观测到 Zero Velocity Command 约 0.075 ms、Motion Authority
+Withdrawal 约 1.276 ms、STM32 Stop Confirmation 约 30.8 ms。这些是成功 Demo 的观测值，不是
+有保证的最坏情况安全上限。

@@ -101,7 +101,7 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
   if (!AppRtos_InitObjects())
   {
-    AppSafety_ForceFault(APP_FAULT_RTOS_MALLOC_FAILURE);
+    AppSafety_ForceFault(0U);
   }
   /* USER CODE END Init */
 

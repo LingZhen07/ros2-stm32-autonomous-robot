@@ -1393,6 +1393,38 @@ Navigation goal
 → target reached
 ```
 
+---
+
+# GitHub Repository Synchronization and Milestone Release Policy
+
+The RobotProject repository uses Git and GitHub as the official project history and release archive.
+
+Codex is responsible for maintaining repository consistency during milestone development.
+
+GitHub synchronization is part of the engineering workflow.
+
+---
+
+## Git Read Operations
+
+Codex may execute all Git read-only operations without requesting permission.
+
+Allowed examples:
+
+```bash
+git status
+git status --short
+git diff
+git diff --cached
+git diff --check
+git log
+git log --oneline
+git show
+git branch
+git branch -a
+git remote -v
+git rev-parse HEAD
+
 That final behavior must be demonstrated on the real robot.
 
 Until then, continue breadth-first integration and freeze completed subsystems.

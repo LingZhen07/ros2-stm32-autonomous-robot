@@ -17,6 +17,7 @@ typedef struct
   float kd;
   float integrator_limit;
   float output_limit;
+  float target_ramp_rate_cps2;
   bool configured;
 } AppControllerConfig;
 

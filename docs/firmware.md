@@ -10,10 +10,10 @@
 | M2 peripheral foundation | `VERIFIED` | Real ADC, encoder, ICM-42688-P, TIM1 PWM behavior |
 | M3 real-time control foundation | `VERIFIED` | FreeRTOS, safety, watchdog architecture, TB6612 path, real motor rotation |
 | M4 Protocol v1 + firmware FDCAN | `FROZEN / PHYSICALLY INTEGRATED` | Shared contract, firmware integration, and real Orange Pi CAN3 link accepted |
-| M5 firmware cross-domain support | `READY FOR STRAIGHT-DRIVE ACCEPTANCE` | BODY_VELOCITY drivetrain/control configuration complete; physical closed-loop performance remains to be measured |
+| M5 real-hardware integration | `VERIFIED / PASS` | BODY_COMMAND_READY, Motion Authority, 0.30 m/s closed-loop straight motion, LiDAR stop, authority withdrawal, and STM32 safe stop accepted |
 
-M1-M3 physical hardware acceptance is complete. M4 now also has real cross-domain CAN FD evidence;
-this does not imply that the later straight-drive motion demo is accepted.
+M1-M5 real-hardware acceptance is complete. Protocol 1.0 remains frozen and production transport
+remains Orange Pi CAN3 / SocketCAN `can3`.
 
 ## MCU baseline
 
@@ -256,15 +256,13 @@ data. Explicit Linux sample points 80% / 82.5% produced Error Active with zero T
 zero bus-off events. Protocol 1.0, the firmware timing, and the robot's default DISARMED behavior
 are unchanged.
 
-Still required during the next motion stage:
+The final M5 real-hardware demo passed with firmware `0.5.4`: BODY_COMMAND_READY and Motion Authority
+were confirmed, closed-loop straight motion ran at the current 0.30 m/s commissioning limit, and a
+real RPLIDAR A1 `/scan` obstacle inside the 30° frontal sector at 0.60 m caused zero velocity,
+authority withdrawal, and STM32 safe stop. STOPPED remained latched after obstacle removal and a new
+explicit user START was required before motion could resume. The accepted commissioning speed is
+not a claim of physical maximum speed.
 
-- validate the commissioning radius/track with real straight-line and rotational motion;
-- physically validate stable closed-loop tracking through the 0.05 to 0.30 m/s commissioning
-  envelope without sustained saturation or large left/right divergence;
-- verify real authority withdrawal produces a prompt physical stop;
-- only then connect the accepted straight-drive path to the `/scan` obstacle-stop demo.
-
-The M5 firmware now initializes with Motor Mapping, Wheel Control, and BODY_COMMAND_READY enabled
-when all runtime health/safety guards are valid. This is a direct Orange Pi integration handoff,
-not physical closed-loop acceptance: the next and only firmware gate is the controlled straight-
-drive run described above.
+Observed obstacle-detection intervals were approximately 0.075 ms to the zero velocity command,
+1.276 ms to Motion Authority withdrawal, and 30.8 ms to STM32 stop confirmation. These are successful
+demo observations, not guaranteed worst-case safety limits.

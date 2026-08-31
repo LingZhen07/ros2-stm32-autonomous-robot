@@ -14,17 +14,6 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("config", default_value=default_config),
-            DeclareLaunchArgument("can_interface", default_value="can3"),
-            Node(
-                package="robot_stm32_bridge",
-                executable="robot_stm32_bridge_node",
-                name="robot_stm32_bridge",
-                output="screen",
-                parameters=[
-                    LaunchConfiguration("config"),
-                    {"can_interface": LaunchConfiguration("can_interface")},
-                ],
-            ),
             Node(
                 package="robot_stm32_bridge",
                 executable="straight_obstacle_stop_demo",

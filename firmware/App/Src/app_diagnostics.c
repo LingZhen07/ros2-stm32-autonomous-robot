@@ -1,17 +1,21 @@
 #include "app_diagnostics.h"
 
-#include "app_battery.h"
+#include "app_can.h"
 #include "app_command.h"
 #include "app_config.h"
 #include "app_control.h"
 #include "app_drivetrain.h"
+#include "app_encoder.h"
+#include "app_motor.h"
 #include "app_platform.h"
+#include "app_protocol.h"
 #include "app_safety.h"
 #include "app_state.h"
 #include "app_telemetry.h"
 #include "cmsis_os2.h"
 #include "usart.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -20,53 +24,199 @@
 
 typedef struct
 {
-  char text[APP_DIAGNOSTIC_LINE_LENGTH];
-} AppDiagnosticLine;
+  uint16_t length;
+  char text[APP_DIAGNOSTIC_OUTPUT_LENGTH];
+} AppDiagnosticBlock;
+
+typedef enum
+{
+  APP_DIAGNOSTIC_WATCH_OFF = 0,
+  APP_DIAGNOSTIC_WATCH_ENCODER,
+  APP_DIAGNOSTIC_WATCH_IMU,
+  APP_DIAGNOSTIC_WATCH_CAN
+} AppDiagnosticWatchSource;
+
+typedef struct
+{
+  uint32_t flag;
+  const char *name;
+} AppDiagnosticFaultInfo;
+
+static const AppDiagnosticFaultInfo g_fault_info[] = {
+  {APP_FAULT_IMU_INITIALIZATION, "IMU_INITIALIZATION"},
+  {APP_FAULT_COMMAND_TIMEOUT, "COMMAND_TIMEOUT"},
+  {APP_FAULT_INVALID_MOTOR_COMMAND, "INVALID_MOTOR_COMMAND"},
+  {APP_FAULT_SUPERVISOR, "SUPERVISOR"},
+  {APP_FAULT_ENCODER_VALIDITY, "ENCODER_VALIDITY"},
+  {APP_FAULT_BATTERY_MEASUREMENT, "BATTERY_MEASUREMENT"},
+  {APP_FAULT_CONTROL_SATURATION, "CONTROL_SATURATION"},
+  {APP_FAULT_CONTROL_ABNORMAL, "CONTROL_ABNORMAL"},
+  {APP_FAULT_INTERNAL_CONFIGURATION, "INTERNAL_CONFIGURATION"},
+  {APP_FAULT_RTOS_STACK_OVERFLOW, "RTOS_STACK_OVERFLOW"},
+  {APP_FAULT_RTOS_MALLOC_FAILURE, "RTOS_MALLOC_FAILURE"},
+  {APP_FAULT_FDCAN_COMMUNICATION, "FDCAN_COMMUNICATION"}
+};
 
 static osMessageQueueId_t g_rx_queue;
 static osMessageQueueId_t g_tx_queue;
 static uint8_t g_rx_byte;
-static char g_rx_line[APP_DIAGNOSTIC_LINE_LENGTH];
+static char g_rx_line[APP_DIAGNOSTIC_INPUT_LENGTH];
 static uint32_t g_rx_length;
-static AppDiagnosticLine g_active_tx;
+static AppDiagnosticBlock g_response;
+static AppDiagnosticBlock g_active_tx;
 static volatile bool g_tx_busy;
-static volatile uint32_t g_dropped_lines;
+static volatile bool g_rx_overflow_pending;
+static volatile uint32_t g_rx_dropped_bytes;
+static volatile uint32_t g_uart_error_count;
+static uint32_t g_dropped_blocks;
+static bool g_response_truncated;
+static bool g_discard_input_line;
+static bool g_line_too_long_pending;
+static AppDiagnosticWatchSource g_watch_source;
+static uint32_t g_next_watch_ms;
 
-static int32_t AppDiagnostics_Scaled(float value, float scale)
+static void AppDiagnostics_ResponseReset(void)
 {
-  if (!isfinite(value))
-  {
-    return 0;
-  }
-  return (int32_t)(value * scale);
+  memset(&g_response, 0, sizeof(g_response));
+  g_response_truncated = false;
 }
 
-static bool AppDiagnostics_Queue(const char *format, ...)
+static void AppDiagnostics_ResponseAppend(const char *format, ...)
 {
-  AppDiagnosticLine line;
   va_list args;
-  int length;
+  size_t available;
+  int written;
 
-  if ((g_tx_queue == NULL) || (format == NULL))
+  if ((format == NULL) || g_response_truncated)
   {
-    return false;
+    return;
+  }
+  available = sizeof(g_response.text) - g_response.length;
+  if (available <= 1U)
+  {
+    g_response_truncated = true;
+    return;
   }
 
   va_start(args, format);
-  length = vsnprintf(line.text, sizeof(line.text), format, args);
+  written = vsnprintf(&g_response.text[g_response.length], available, format, args);
   va_end(args);
-  if (length < 0)
+  if (written < 0)
   {
-    return false;
+    g_response_truncated = true;
   }
-
-  line.text[sizeof(line.text) - 1U] = '\0';
-  if (osMessageQueuePut(g_tx_queue, &line, 0U, 0U) != osOK)
+  else if ((size_t)written >= available)
   {
-    g_dropped_lines++;
+    g_response.length = (uint16_t)(sizeof(g_response.text) - 1U);
+    g_response.text[g_response.length] = '\0';
+    g_response_truncated = true;
+  }
+  else
+  {
+    g_response.length = (uint16_t)(g_response.length + (uint16_t)written);
+  }
+}
+
+static void AppDiagnostics_ResponseStart(const char *line)
+{
+  AppDiagnostics_ResponseReset();
+  AppDiagnostics_ResponseAppend("\r\n> %s\r\n\r\n", (line != NULL) ? line : "");
+}
+
+static bool AppDiagnostics_QueueCurrentResponse(bool low_priority)
+{
+  static const char truncated[] = "\r\nERROR: response truncated\r\n\r\n> ";
+
+  if (g_response_truncated)
+  {
+    const size_t marker_length = sizeof(truncated) - 1U;
+    const size_t offset = sizeof(g_response.text) - marker_length - 1U;
+    memcpy(&g_response.text[offset], truncated, marker_length + 1U);
+    g_response.length = (uint16_t)(offset + marker_length);
+  }
+  if ((g_tx_queue == NULL) ||
+      (low_priority && (osMessageQueueGetSpace(g_tx_queue) <= 1U)) ||
+      (osMessageQueuePut(g_tx_queue, &g_response, 0U, 0U) != osOK))
+  {
+    g_dropped_blocks++;
     return false;
   }
   return true;
+}
+
+static void AppDiagnostics_ResponseFinish(void)
+{
+  AppDiagnostics_ResponseAppend("\r\n> ");
+  (void)AppDiagnostics_QueueCurrentResponse(false);
+}
+
+static void AppDiagnostics_I64ToText(int64_t value, char text[22])
+{
+  char reverse[21];
+  uint32_t length = 0U;
+  uint32_t output = 0U;
+  uint64_t magnitude = (value < 0) ? ((uint64_t)(-(value + 1)) + 1U) : (uint64_t)value;
+
+  do
+  {
+    reverse[length++] = (char)('0' + (magnitude % 10U));
+    magnitude /= 10U;
+  } while (magnitude != 0U);
+
+  if (value < 0)
+  {
+    text[output++] = '-';
+  }
+  while (length > 0U)
+  {
+    text[output++] = reverse[--length];
+  }
+  text[output] = '\0';
+}
+
+static uint32_t AppDiagnostics_Power10(uint8_t decimals)
+{
+  uint32_t value = 1U;
+  for (uint8_t index = 0U; index < decimals; ++index)
+  {
+    value *= 10U;
+  }
+  return value;
+}
+
+static void AppDiagnostics_AppendFixed(float value, uint8_t decimals)
+{
+  uint32_t scale;
+  double scaled;
+  int32_t rounded;
+  uint32_t magnitude;
+
+  if (!isfinite(value) || (decimals > 6U))
+  {
+    AppDiagnostics_ResponseAppend("INVALID");
+    return;
+  }
+  scale = AppDiagnostics_Power10(decimals);
+  scaled = (double)value * (double)scale;
+  if ((scaled < (double)INT32_MIN) || (scaled > (double)INT32_MAX))
+  {
+    AppDiagnostics_ResponseAppend("OUT_OF_RANGE");
+    return;
+  }
+  rounded = (int32_t)(scaled + ((scaled >= 0.0) ? 0.5 : -0.5));
+  magnitude = (rounded < 0) ? (uint32_t)(-(int64_t)rounded) : (uint32_t)rounded;
+
+  if (decimals == 0U)
+  {
+    AppDiagnostics_ResponseAppend("%s%lu", (rounded < 0) ? "-" : "",
+                                  (unsigned long)magnitude);
+  }
+  else
+  {
+    AppDiagnostics_ResponseAppend("%s%lu.%0*lu", (rounded < 0) ? "-" : "",
+                                  (unsigned long)(magnitude / scale), (int)decimals,
+                                  (unsigned long)(magnitude % scale));
+  }
 }
 
 static bool AppDiagnostics_ParseFloat(const char *text, float *value)
@@ -92,7 +242,7 @@ static bool AppDiagnostics_ParseU32(const char *text, uint32_t *value)
   char *end = NULL;
   unsigned long parsed;
 
-  if ((text == NULL) || (value == NULL))
+  if ((text == NULL) || (value == NULL) || (*text == '-'))
   {
     return false;
   }
@@ -105,324 +255,561 @@ static bool AppDiagnostics_ParseU32(const char *text, uint32_t *value)
   return true;
 }
 
-static void AppDiagnostics_PrintStatus(void)
+static const char *AppDiagnostics_CanStateName(const AppCanSnapshot *can)
+{
+  if ((can == NULL) || !can->initialized) { return "NOT_INITIALIZED"; }
+  if (can->bus_off) { return "BUS_OFF"; }
+  if (can->error_passive) { return "ERROR_PASSIVE"; }
+  if (can->error_warning) { return "ERROR_WARNING"; }
+  return "ERROR_ACTIVE";
+}
+
+static const char *AppDiagnostics_ImuStateName(AppImuState state)
+{
+  switch (state)
+  {
+    case APP_IMU_STATE_INITIALIZING: return "INITIALIZING";
+    case APP_IMU_STATE_READY: return "READY";
+    case APP_IMU_STATE_FAULT: return "FAULT";
+    case APP_IMU_STATE_NOT_INITIALIZED:
+    default: return "NOT_INITIALIZED";
+  }
+}
+
+static const char *AppDiagnostics_AuthorityName(const AppCanSnapshot *can,
+                                                 const AppCommandSnapshot *command)
+{
+  if ((can != NULL) && can->authority_armed) { return "CAN"; }
+  if ((command != NULL) && command->arm_requested) { return "UART"; }
+  return "NONE";
+}
+
+static const char *AppDiagnostics_FirstFaultName(uint32_t faults)
+{
+  for (uint32_t index = 0U; index < (sizeof(g_fault_info) / sizeof(g_fault_info[0])); ++index)
+  {
+    if ((faults & g_fault_info[index].flag) != 0U)
+    {
+      return g_fault_info[index].name;
+    }
+  }
+  return "UNKNOWN";
+}
+
+static void AppDiagnostics_AppendFaultNames(uint32_t faults)
+{
+  bool first = true;
+
+  if (faults == 0U)
+  {
+    AppDiagnostics_ResponseAppend("NONE");
+    return;
+  }
+  for (uint32_t index = 0U; index < (sizeof(g_fault_info) / sizeof(g_fault_info[0])); ++index)
+  {
+    if ((faults & g_fault_info[index].flag) != 0U)
+    {
+      AppDiagnostics_ResponseAppend("%s%s", first ? "" : " ",
+                                    g_fault_info[index].name);
+      first = false;
+    }
+  }
+  if (first)
+  {
+    AppDiagnostics_ResponseAppend("UNKNOWN");
+  }
+}
+
+static void AppDiagnostics_PrintStatus(uint32_t now_ms)
 {
   AppTelemetrySnapshot telemetry;
   AppCommandSnapshot command;
-  const uint32_t now_ms = osKernelGetTickCount();
+  AppCanSnapshot can;
+  const bool encoders_valid = AppEncoder_AllValid(now_ms);
 
   AppTelemetry_GetSnapshot(now_ms, &telemetry);
   AppCommand_GetSnapshot(now_ms, &command);
-  (void)AppDiagnostics_Queue(
-    "fw=%s state=%s fault=0x%08lx reset=0x%08lx runtime_ms=%lu\r\n",
-    APP_VERSION_STRING, AppState_SystemStateName(telemetry.state.system_state),
-    (unsigned long)telemetry.state.fault_flags, (unsigned long)telemetry.state.reset_reason,
-    (unsigned long)telemetry.runtime_ms);
-  (void)AppDiagnostics_Queue(
-    "safety arm=%u cmd=%u mode=%u fresh=%u seq=%lu motor_en=%u effort_milli=%ld,%ld\r\n",
-    command.arm_requested ? 1U : 0U, command.valid ? 1U : 0U, (unsigned int)command.mode,
-    command.fresh ? 1U : 0U, (unsigned long)command.sequence,
-    telemetry.motor.standby_asserted ? 1U : 0U,
-    (long)AppDiagnostics_Scaled(telemetry.motor.motor_a_effort, 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.motor.motor_b_effort, 1000.0f));
-  (void)AppDiagnostics_Queue(
-    "battery valid=%u raw=%u adc_mv=%ld estimate_mv=%ld filtered_mv=%ld divider_verified=%u\r\n",
-    telemetry.battery.valid ? 1U : 0U, telemetry.battery.raw_adc,
-    (long)AppDiagnostics_Scaled(telemetry.battery.adc_voltage, 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.battery.estimated_battery_voltage, 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.battery.filtered_battery_voltage, 1000.0f),
-    telemetry.battery.divider_calibrated ? 1U : 0U);
-  (void)AppDiagnostics_Queue(
-    "encoder e1_raw=%u e1_cps=%ld e1_valid=%u e2_raw=%u e2_cps=%ld e2_valid=%u\r\n",
-    telemetry.encoder_1.raw_counter,
-    (long)AppDiagnostics_Scaled(telemetry.encoder_1.filtered_counts_per_second, 1.0f),
-    telemetry.encoder_1.valid ? 1U : 0U, telemetry.encoder_2.raw_counter,
-    (long)AppDiagnostics_Scaled(telemetry.encoder_2.filtered_counts_per_second, 1.0f),
-    telemetry.encoder_2.valid ? 1U : 0U);
-  (void)AppDiagnostics_Queue(
-    "imu state=%u who=0x%02x valid=%u accel_milli=%ld,%ld,%ld gyro_milli=%ld,%ld,%ld irq=%lu,%lu\r\n",
-    (unsigned int)telemetry.imu.state, telemetry.imu.who_am_i, telemetry.imu.valid ? 1U : 0U,
-    (long)AppDiagnostics_Scaled(telemetry.imu.acceleration_mps2[0], 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.imu.acceleration_mps2[1], 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.imu.acceleration_mps2[2], 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.imu.angular_velocity_radps[0], 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.imu.angular_velocity_radps[1], 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.imu.angular_velocity_radps[2], 1000.0f),
-    (unsigned long)telemetry.imu.interrupt_1_count,
-    (unsigned long)telemetry.imu.interrupt_2_count);
-  (void)AppDiagnostics_Queue(
-    "controller left_cfg=%u target=%ld measured=%ld out_milli=%ld right_cfg=%u target=%ld measured=%ld out_milli=%ld\r\n",
-    telemetry.left_controller.configured ? 1U : 0U,
-    (long)AppDiagnostics_Scaled(telemetry.left_controller.target, 1.0f),
-    (long)AppDiagnostics_Scaled(telemetry.left_controller.measured, 1.0f),
-    (long)AppDiagnostics_Scaled(telemetry.left_controller.output, 1000.0f),
-    telemetry.right_controller.configured ? 1U : 0U,
-    (long)AppDiagnostics_Scaled(telemetry.right_controller.target, 1.0f),
-    (long)AppDiagnostics_Scaled(telemetry.right_controller.measured, 1.0f),
-    (long)AppDiagnostics_Scaled(telemetry.right_controller.output, 1000.0f));
-  (void)AppDiagnostics_Queue(
-    "supervisor healthy=%u iwdg_feed=%u last_feed_ms=%lu dropped_logs=%lu\r\n",
-    telemetry.supervisor.critical_tasks_healthy ? 1U : 0U,
-    telemetry.supervisor.watchdog_refresh_allowed ? 1U : 0U,
-    (unsigned long)telemetry.supervisor.last_watchdog_refresh_ms,
-    (unsigned long)g_dropped_lines);
+  AppCan_GetSnapshot(now_ms, &can);
+
+  AppDiagnostics_ResponseAppend("FW        : %s\r\n", APP_VERSION_STRING);
+  AppDiagnostics_ResponseAppend("State     : %s\r\n",
+                                AppState_SystemStateName(telemetry.state.system_state));
+  AppDiagnostics_ResponseAppend("Fault     : ");
+  if (telemetry.state.fault_flags == 0U)
+  {
+    AppDiagnostics_ResponseAppend("NONE\r\n");
+  }
+  else
+  {
+    AppDiagnostics_ResponseAppend("0x%08lX\r\n",
+                                  (unsigned long)telemetry.state.fault_flags);
+  }
+  AppDiagnostics_ResponseAppend("Motor     : %s\r\n",
+                                telemetry.motor.standby_asserted ? "ENABLED" : "DISABLED");
+  AppDiagnostics_ResponseAppend("STBY      : %s\r\n",
+                                telemetry.motor.standby_asserted ? "HIGH" : "LOW");
+  AppDiagnostics_ResponseAppend("Encoder   : %s\r\n", encoders_valid ? "OK" : "INVALID");
+  AppDiagnostics_ResponseAppend("IMU       : %s\r\n", telemetry.imu.valid ? "OK" : "INVALID");
+  AppDiagnostics_ResponseAppend("CAN       : %s\r\n", AppDiagnostics_CanStateName(&can));
+  AppDiagnostics_ResponseAppend("Authority : %s\r\n",
+                                AppDiagnostics_AuthorityName(&can, &command));
+  AppDiagnostics_ResponseAppend("Body Cmd  : %s\r\n",
+                                (AppControl_AllConfigured() &&
+                                 AppDrivetrain_BodyCommandReady()) ? "READY" : "NOT READY");
 }
 
-static void AppDiagnostics_PrintDrivetrain(void)
+static void AppDiagnostics_PrintEncoderLine(const char *name, int64_t total,
+                                            float cps, bool valid, uint32_t age_ms)
 {
+  char total_text[22];
+  AppDiagnostics_I64ToText(total, total_text);
+  AppDiagnostics_ResponseAppend("%-5s : total=%s cps=", name, total_text);
+  AppDiagnostics_AppendFixed(cps, 1U);
+  AppDiagnostics_ResponseAppend(" valid=%s age=%lu ms\r\n", valid ? "yes" : "no",
+                                (unsigned long)age_ms);
+}
+
+static void AppDiagnostics_PrintEncoder(uint32_t now_ms)
+{
+  AppEncoderSnapshot encoder_1;
+  AppEncoderSnapshot encoder_2;
   AppDrivetrainConfig config;
+  int64_t left_total;
+  int64_t right_total;
+  float left_cps;
+  float right_cps;
+  bool left_valid;
+  bool right_valid;
+  uint32_t left_age;
+  uint32_t right_age;
+
+  AppEncoder_GetSnapshot(APP_ENCODER_1, now_ms, &encoder_1);
+  AppEncoder_GetSnapshot(APP_ENCODER_2, now_ms, &encoder_2);
   AppDrivetrain_GetConfig(&config);
-  (void)AppDiagnostics_Queue(
-    "drive wheel_ready=%u body_ready=%u motor_sides=%u,%u encoder_sides=%u,%u signs=%d,%d,%d,%d\r\n",
-    AppDrivetrain_WheelControlReady() ? 1U : 0U,
-    AppDrivetrain_BodyCommandReady() ? 1U : 0U,
-    (unsigned int)config.motor_a_side, (unsigned int)config.motor_b_side,
-    (unsigned int)config.encoder_1_side, (unsigned int)config.encoder_2_side,
-    config.motor_a_forward_sign, config.motor_b_forward_sign,
-    config.encoder_1_forward_sign, config.encoder_2_forward_sign);
-  (void)AppDiagnostics_Queue(
-    "drive scale_um=%ld track_um=%ld encoder_counts_milli=%ld gear_milli=%ld\r\n",
-    (long)AppDiagnostics_Scaled(config.effective_wheel_radius_m, 1000000.0f),
-    (long)AppDiagnostics_Scaled(config.wheel_track_m, 1000000.0f),
-    (long)AppDiagnostics_Scaled(config.encoder_counts_per_motor_revolution, 1000.0f),
-    (long)AppDiagnostics_Scaled(config.motor_to_wheel_gear_ratio, 1000.0f));
-}
-
-static void AppDiagnostics_HandlePid(char *side_text)
-{
-  char *kp_text = strtok(NULL, " \t");
-  char *ki_text = strtok(NULL, " \t");
-  char *kd_text = strtok(NULL, " \t");
-  char *integrator_text = strtok(NULL, " \t");
-  char *output_text = strtok(NULL, " \t");
-  AppControllerConfig config;
-  AppControllerId id;
-
-  if ((side_text == NULL) || (strcmp(side_text, "left") != 0 && strcmp(side_text, "right") != 0) ||
-      !AppDiagnostics_ParseFloat(kp_text, &config.kp) ||
-      !AppDiagnostics_ParseFloat(ki_text, &config.ki) ||
-      !AppDiagnostics_ParseFloat(kd_text, &config.kd) ||
-      !AppDiagnostics_ParseFloat(integrator_text, &config.integrator_limit) ||
-      !AppDiagnostics_ParseFloat(output_text, &config.output_limit))
+  if (!AppDrivetrain_MapEncoderPositions(encoder_1.accumulated_counts,
+                                         encoder_2.accumulated_counts,
+                                         &left_total, &right_total) ||
+      !AppDrivetrain_MapEncoderRates(encoder_1.filtered_counts_per_second,
+                                    encoder_2.filtered_counts_per_second,
+                                    &left_cps, &right_cps))
   {
-    (void)AppDiagnostics_Queue("ERR usage: pid left|right kp ki kd integrator_limit output_limit\r\n");
-    return;
-  }
-  config.configured = true;
-  id = (strcmp(side_text, "left") == 0) ? APP_CONTROLLER_LEFT : APP_CONTROLLER_RIGHT;
-  (void)AppDiagnostics_Queue(AppControl_SetConfig(id, &config) ? "OK pid configured\r\n" :
-                                                               "ERR invalid pid configuration\r\n");
-}
-
-static void AppDiagnostics_HandleDrive(char *subcommand)
-{
-  AppDrivetrainConfig config;
-  AppDrivetrain_GetConfig(&config);
-
-  if ((subcommand != NULL) && (strcmp(subcommand, "map") == 0))
-  {
-    char *motor_a_side = strtok(NULL, " \t");
-    char *encoder_1_side = strtok(NULL, " \t");
-    char *motor_a_sign = strtok(NULL, " \t");
-    char *motor_b_sign = strtok(NULL, " \t");
-    char *encoder_1_sign = strtok(NULL, " \t");
-    char *encoder_2_sign = strtok(NULL, " \t");
-    long signs[4];
-    char *end = NULL;
-
-    if ((motor_a_side == NULL) || (encoder_1_side == NULL) ||
-        ((strcmp(motor_a_side, "left") != 0) && (strcmp(motor_a_side, "right") != 0)) ||
-        ((strcmp(encoder_1_side, "left") != 0) && (strcmp(encoder_1_side, "right") != 0)) ||
-        (motor_a_sign == NULL) || (motor_b_sign == NULL) ||
-        (encoder_1_sign == NULL) || (encoder_2_sign == NULL))
-    {
-      (void)AppDiagnostics_Queue("ERR usage: drive map motorA_side encoder1_side ma mb e1 e2 (signs +/-1)\r\n");
-      return;
-    }
-    signs[0] = strtol(motor_a_sign, &end, 10);
-    if (*end != '\0') { goto invalid_map; }
-    signs[1] = strtol(motor_b_sign, &end, 10);
-    if (*end != '\0') { goto invalid_map; }
-    signs[2] = strtol(encoder_1_sign, &end, 10);
-    if (*end != '\0') { goto invalid_map; }
-    signs[3] = strtol(encoder_2_sign, &end, 10);
-    if (*end != '\0') { goto invalid_map; }
-    for (uint32_t index = 0U; index < 4U; ++index)
-    {
-      if ((signs[index] != -1L) && (signs[index] != 1L)) { goto invalid_map; }
-    }
-
-    config.motor_a_side = (strcmp(motor_a_side, "left") == 0) ? APP_WHEEL_LEFT : APP_WHEEL_RIGHT;
-    config.motor_b_side = (config.motor_a_side == APP_WHEEL_LEFT) ? APP_WHEEL_RIGHT : APP_WHEEL_LEFT;
-    config.encoder_1_side = (strcmp(encoder_1_side, "left") == 0) ? APP_WHEEL_LEFT : APP_WHEEL_RIGHT;
-    config.encoder_2_side = (config.encoder_1_side == APP_WHEEL_LEFT) ? APP_WHEEL_RIGHT : APP_WHEEL_LEFT;
-    config.motor_a_forward_sign = (int8_t)signs[0];
-    config.motor_b_forward_sign = (int8_t)signs[1];
-    config.encoder_1_forward_sign = (int8_t)signs[2];
-    config.encoder_2_forward_sign = (int8_t)signs[3];
-    (void)AppDrivetrain_SetConfig(&config);
-    (void)AppDiagnostics_Queue("OK drivetrain mapping set in volatile commissioning configuration\r\n");
-    return;
-
-invalid_map:
-    (void)AppDiagnostics_Queue("ERR invalid drivetrain mapping\r\n");
+    AppDiagnostics_PrintEncoderLine("Enc1", encoder_1.accumulated_counts,
+                                    encoder_1.filtered_counts_per_second,
+                                    encoder_1.valid, encoder_1.sample_age_ms);
+    AppDiagnostics_PrintEncoderLine("Enc2", encoder_2.accumulated_counts,
+                                    encoder_2.filtered_counts_per_second,
+                                    encoder_2.valid, encoder_2.sample_age_ms);
+    AppDiagnostics_ResponseAppend("Mapping: INVALID\r\n");
     return;
   }
 
-  if ((subcommand != NULL) && (strcmp(subcommand, "scale") == 0))
+  if (config.encoder_1_side == APP_WHEEL_RIGHT)
   {
-    char *radius = strtok(NULL, " \t");
-    char *track = strtok(NULL, " \t");
-    char *counts = strtok(NULL, " \t");
-    char *gear = strtok(NULL, " \t");
-    if (!AppDiagnostics_ParseFloat(radius, &config.effective_wheel_radius_m) ||
-        !AppDiagnostics_ParseFloat(track, &config.wheel_track_m) ||
-        !AppDiagnostics_ParseFloat(counts, &config.encoder_counts_per_motor_revolution) ||
-        !AppDiagnostics_ParseFloat(gear, &config.motor_to_wheel_gear_ratio) ||
-        (config.effective_wheel_radius_m <= 0.0f) || (config.wheel_track_m <= 0.0f) ||
-        (config.encoder_counts_per_motor_revolution <= 0.0f) ||
-        (config.motor_to_wheel_gear_ratio <= 0.0f))
-    {
-      (void)AppDiagnostics_Queue("ERR usage: drive scale radius_m track_m decoded_counts_per_motor_rev gear_ratio\r\n");
-      return;
-    }
-    (void)AppDrivetrain_SetConfig(&config);
-    (void)AppDiagnostics_Queue("OK drivetrain scale set in volatile commissioning configuration\r\n");
-    return;
+    right_valid = encoder_1.valid;
+    right_age = encoder_1.sample_age_ms;
+    left_valid = encoder_2.valid;
+    left_age = encoder_2.sample_age_ms;
   }
-
-  AppDiagnostics_PrintDrivetrain();
+  else
+  {
+    left_valid = encoder_1.valid;
+    left_age = encoder_1.sample_age_ms;
+    right_valid = encoder_2.valid;
+    right_age = encoder_2.sample_age_ms;
+  }
+  AppDiagnostics_PrintEncoderLine("Right", right_total, right_cps, right_valid, right_age);
+  AppDiagnostics_PrintEncoderLine("Left", left_total, left_cps, left_valid, left_age);
 }
 
-static void AppDiagnostics_HandleLine(char *line)
+static void AppDiagnostics_PrintImu(uint32_t now_ms)
 {
-  char *command = strtok(line, " \t");
+  AppTelemetrySnapshot telemetry;
+  AppTelemetry_GetSnapshot(now_ms, &telemetry);
 
+  AppDiagnostics_ResponseAppend("State : %s\r\n", AppDiagnostics_ImuStateName(telemetry.imu.state));
+  AppDiagnostics_ResponseAppend("WHO   : 0x%02X\r\n", telemetry.imu.who_am_i);
+  AppDiagnostics_ResponseAppend("Valid : %s age=%lu ms\r\n",
+                                telemetry.imu.valid ? "yes" : "no",
+                                (unsigned long)telemetry.imu.sample_age_ms);
+  AppDiagnostics_ResponseAppend("Accel : x=");
+  AppDiagnostics_AppendFixed(telemetry.imu.acceleration_mps2[0], 3U);
+  AppDiagnostics_ResponseAppend(" y=");
+  AppDiagnostics_AppendFixed(telemetry.imu.acceleration_mps2[1], 3U);
+  AppDiagnostics_ResponseAppend(" z=");
+  AppDiagnostics_AppendFixed(telemetry.imu.acceleration_mps2[2], 3U);
+  AppDiagnostics_ResponseAppend(" m/s^2\r\nGyro  : x=");
+  AppDiagnostics_AppendFixed(telemetry.imu.angular_velocity_radps[0], 3U);
+  AppDiagnostics_ResponseAppend(" y=");
+  AppDiagnostics_AppendFixed(telemetry.imu.angular_velocity_radps[1], 3U);
+  AppDiagnostics_ResponseAppend(" z=");
+  AppDiagnostics_AppendFixed(telemetry.imu.angular_velocity_radps[2], 3U);
+  AppDiagnostics_ResponseAppend(" rad/s\r\n");
+}
+
+static void AppDiagnostics_PrintBattery(uint32_t now_ms)
+{
+  AppTelemetrySnapshot telemetry;
+  AppTelemetry_GetSnapshot(now_ms, &telemetry);
+
+  AppDiagnostics_ResponseAppend("Valid   : %s age=%lu ms\r\n",
+                                telemetry.battery.valid ? "yes" : "no",
+                                (unsigned long)telemetry.battery.sample_age_ms);
+  AppDiagnostics_ResponseAppend("ADC     : %u counts / ", telemetry.battery.raw_adc);
+  AppDiagnostics_AppendFixed(telemetry.battery.adc_voltage, 3U);
+  AppDiagnostics_ResponseAppend(" V\r\nBattery : ");
+  AppDiagnostics_AppendFixed(telemetry.battery.filtered_battery_voltage, 3U);
+  AppDiagnostics_ResponseAppend(" V (%s divider)\r\n",
+                                telemetry.battery.divider_calibrated ? "verified" : "commissioning");
+}
+
+static void AppDiagnostics_AppendCanAge(const char *label, bool seen, bool fresh,
+                                        uint32_t age_ms)
+{
+  if (!seen)
+  {
+    AppDiagnostics_ResponseAppend("%-7s : NONE\r\n", label);
+  }
+  else
+  {
+    AppDiagnostics_ResponseAppend("%-7s : %s age=%lu ms\r\n", label,
+                                  fresh ? "FRESH" : "STALE", (unsigned long)age_ms);
+  }
+}
+
+static void AppDiagnostics_PrintCan(uint32_t now_ms)
+{
+  AppCanSnapshot can;
+  AppCan_GetSnapshot(now_ms, &can);
+
+  AppDiagnostics_ResponseAppend("State   : %s\r\n", AppDiagnostics_CanStateName(&can));
+  AppDiagnostics_ResponseAppend("RX/TX   : %lu / %lu\r\n",
+                                (unsigned long)can.rx_frames, (unsigned long)can.tx_frames);
+  AppDiagnostics_ResponseAppend("Reject  : %lu  SeqErr=%lu\r\n",
+                                (unsigned long)can.rx_rejected,
+                                (unsigned long)(can.rx_duplicate + can.rx_out_of_order));
+  AppDiagnostics_ResponseAppend("Overflow: %lu  TXFail=%lu  BusOff=%lu\r\n",
+                                (unsigned long)can.rx_overflow,
+                                (unsigned long)can.tx_failures,
+                                (unsigned long)can.bus_off_count);
+  if (can.session_active)
+  {
+    AppDiagnostics_ResponseAppend("Session : 0x%08lX\r\n",
+                                  (unsigned long)can.active_session_id);
+  }
+  else
+  {
+    AppDiagnostics_ResponseAppend("Session : NONE\r\n");
+  }
+  AppDiagnostics_AppendCanAge("HB", can.heartbeat_sequence_seen,
+                              can.heartbeat_fresh, can.heartbeat_age_ms);
+  if (can.authority_sequence_seen)
+  {
+    const char *state = can.authority_armed ? "ARMED" :
+                        (can.authority_fresh ? "DISARMED" : "STALE");
+    AppDiagnostics_ResponseAppend("Auth    : %s age=%lu ms\r\n", state,
+                                  (unsigned long)can.authority_age_ms);
+  }
+  else
+  {
+    AppDiagnostics_ResponseAppend("Auth    : NONE\r\n");
+  }
+  AppDiagnostics_AppendCanAge("Cmd", can.command_sequence_seen,
+                              can.command_sequence_seen &&
+                              (can.command_age_ms <= APP_COMMAND_DEFAULT_TIMEOUT_MS),
+                              can.command_age_ms);
+}
+
+static void AppDiagnostics_PrintFault(void)
+{
+  const uint32_t faults = AppState_GetFaultFlags();
+  AppDiagnostics_ResponseAppend("0x%08lX ", (unsigned long)faults);
+  AppDiagnostics_AppendFaultNames(faults);
+  AppDiagnostics_ResponseAppend("\r\n");
+}
+
+static void AppDiagnostics_PrintHelp(void)
+{
+  AppDiagnostics_ResponseAppend("help\r\n");
+  AppDiagnostics_ResponseAppend("status\r\n");
+  AppDiagnostics_ResponseAppend("encoder | imu | battery | can\r\n");
+  AppDiagnostics_ResponseAppend("fault | clear\r\n");
+  AppDiagnostics_ResponseAppend("arm | disarm | stop\r\n");
+  AppDiagnostics_ResponseAppend("motor <a> <b> <duration_ms>\r\n");
+  AppDiagnostics_ResponseAppend("watch encoder|imu|can | watch off\r\n");
+  AppDiagnostics_ResponseAppend("motor: finite effort -1..+1, duration %u..%u ms\r\n",
+                                APP_MOTOR_CONTROL_PERIOD_MS, APP_COMMAND_MAX_TIMEOUT_MS);
+}
+
+static bool AppDiagnostics_UartMotionAvailable(uint32_t now_ms)
+{
+  AppCanSnapshot can;
+  AppCan_GetSnapshot(now_ms, &can);
+  return !can.authority_armed;
+}
+
+static void AppDiagnostics_AppendSyntax(const char *usage)
+{
+  AppDiagnostics_ResponseAppend("ERROR: syntax\r\nUsage: %s\r\n", usage);
+}
+
+static void AppDiagnostics_HandleClear(void)
+{
+  uint32_t faults;
+  (void)AppSafety_ClearRecoverableFaults();
+  faults = AppState_GetFaultFlags();
+  if (faults == 0U)
+  {
+    AppDiagnostics_ResponseAppend("OK\r\n");
+  }
+  else if ((faults & APP_FAULT_ENCODER_VALIDITY) != 0U)
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: ENCODER_VALIDITY still active\r\n");
+  }
+  else
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: %s still active\r\n",
+                                  AppDiagnostics_FirstFaultName(faults));
+  }
+}
+
+static void AppDiagnostics_HandleArm(uint32_t now_ms)
+{
+  if (!AppDiagnostics_UartMotionAvailable(now_ms))
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: CAN authority active\r\n");
+  }
+  else if (AppState_HasCriticalFault())
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: critical fault active\r\n");
+  }
+  else
+  {
+    AppCommand_RequestArm();
+    AppDiagnostics_ResponseAppend("OK\r\n");
+  }
+}
+
+static void AppDiagnostics_HandleStop(void)
+{
+  AppCommand_Stop();
+  AppControl_Reset();
+  AppMotor_ForceSafe();
+  AppDiagnostics_ResponseAppend("OK\r\n");
+}
+
+static void AppDiagnostics_HandleMotor(uint32_t now_ms)
+{
+  char *a_text = strtok(NULL, " \t");
+  char *b_text = strtok(NULL, " \t");
+  char *duration_text = strtok(NULL, " \t");
+  AppCommandSnapshot command;
+  float motor_a;
+  float motor_b;
+  uint32_t duration_ms;
+
+  if (!AppDiagnostics_ParseFloat(a_text, &motor_a) ||
+      !AppDiagnostics_ParseFloat(b_text, &motor_b) ||
+      !AppDiagnostics_ParseU32(duration_text, &duration_ms) ||
+      (strtok(NULL, " \t") != NULL))
+  {
+    AppDiagnostics_AppendSyntax("motor <a> <b> <duration_ms>");
+    return;
+  }
+  if ((motor_a < -1.0f) || (motor_a > 1.0f) ||
+      (motor_b < -1.0f) || (motor_b > 1.0f))
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: effort must be -1..+1\r\n");
+    return;
+  }
+  if ((duration_ms < APP_MOTOR_CONTROL_PERIOD_MS) ||
+      (duration_ms > APP_COMMAND_MAX_TIMEOUT_MS))
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: duration must be %u..%u ms\r\n",
+                                  APP_MOTOR_CONTROL_PERIOD_MS,
+                                  APP_COMMAND_MAX_TIMEOUT_MS);
+    return;
+  }
+  if (!AppDiagnostics_UartMotionAvailable(now_ms))
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: CAN authority active\r\n");
+    return;
+  }
+  if (AppState_HasCriticalFault())
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: critical fault active\r\n");
+    return;
+  }
+  AppCommand_GetSnapshot(now_ms, &command);
+  if (!command.arm_requested)
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: arm required\r\n");
+    return;
+  }
+  if (!AppCommand_SubmitMotorEffort(APP_COMMAND_SOURCE_DIAGNOSTIC,
+                                    motor_a, motor_b, duration_ms))
+  {
+    AppDiagnostics_ResponseAppend("REJECTED: command validation failed\r\n");
+    return;
+  }
+  AppDiagnostics_ResponseAppend("OK: motor command accepted (%lu ms)\r\n",
+                                (unsigned long)duration_ms);
+}
+
+static const char *AppDiagnostics_WatchName(AppDiagnosticWatchSource source)
+{
+  switch (source)
+  {
+    case APP_DIAGNOSTIC_WATCH_ENCODER: return "encoder";
+    case APP_DIAGNOSTIC_WATCH_IMU: return "imu";
+    case APP_DIAGNOSTIC_WATCH_CAN: return "can";
+    case APP_DIAGNOSTIC_WATCH_OFF:
+    default: return "off";
+  }
+}
+
+static void AppDiagnostics_HandleWatch(uint32_t now_ms)
+{
+  char *source = strtok(NULL, " \t");
+
+  if ((source == NULL) || (strtok(NULL, " \t") != NULL))
+  {
+    AppDiagnostics_AppendSyntax("watch encoder|imu|can | watch off");
+    return;
+  }
+  if (strcmp(source, "off") == 0)
+  {
+    g_watch_source = APP_DIAGNOSTIC_WATCH_OFF;
+    AppDiagnostics_ResponseAppend("OK\r\n");
+    return;
+  }
+  if (strcmp(source, "encoder") == 0)
+  {
+    g_watch_source = APP_DIAGNOSTIC_WATCH_ENCODER;
+  }
+  else if (strcmp(source, "imu") == 0)
+  {
+    g_watch_source = APP_DIAGNOSTIC_WATCH_IMU;
+  }
+  else if (strcmp(source, "can") == 0)
+  {
+    g_watch_source = APP_DIAGNOSTIC_WATCH_CAN;
+  }
+  else
+  {
+    AppDiagnostics_AppendSyntax("watch encoder|imu|can | watch off");
+    return;
+  }
+  g_next_watch_ms = now_ms + (1000U / APP_DIAGNOSTIC_WATCH_DEFAULT_HZ);
+  AppDiagnostics_ResponseAppend("OK: watch %s at %u Hz\r\n",
+                                AppDiagnostics_WatchName(g_watch_source),
+                                APP_DIAGNOSTIC_WATCH_DEFAULT_HZ);
+}
+
+static void AppDiagnostics_HandleLine(char *line, uint32_t now_ms)
+{
+  char display_line[APP_DIAGNOSTIC_INPUT_LENGTH];
+  char *command;
+
+  strncpy(display_line, line, sizeof(display_line) - 1U);
+  display_line[sizeof(display_line) - 1U] = '\0';
+  command = strtok(line, " \t");
   if ((command == NULL) || (*command == '\0'))
   {
     return;
   }
-  if (strcmp(command, "status") == 0)
+  AppDiagnostics_ResponseStart(display_line);
+
+  if (strcmp(command, "help") == 0)
   {
-    AppDiagnostics_PrintStatus();
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_PrintHelp(); }
+    else { AppDiagnostics_AppendSyntax("help"); }
   }
-  else if (strcmp(command, "arm") == 0)
+  else if (strcmp(command, "status") == 0)
   {
-    if (AppState_HasCriticalFault())
-    {
-      (void)AppDiagnostics_Queue("ERR clear critical fault before arm\r\n");
-    }
-    else
-    {
-      AppCommand_RequestArm();
-      (void)AppDiagnostics_Queue("OK arm requested; fresh valid command still required\r\n");
-    }
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_PrintStatus(now_ms); }
+    else { AppDiagnostics_AppendSyntax("status"); }
   }
-  else if ((strcmp(command, "disarm") == 0) || (strcmp(command, "stop") == 0))
+  else if (strcmp(command, "encoder") == 0)
   {
-    AppCommand_Stop();
-    (void)AppDiagnostics_Queue("OK motor domain disarmed\r\n");
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_PrintEncoder(now_ms); }
+    else { AppDiagnostics_AppendSyntax("encoder"); }
+  }
+  else if (strcmp(command, "imu") == 0)
+  {
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_PrintImu(now_ms); }
+    else { AppDiagnostics_AppendSyntax("imu"); }
+  }
+  else if (strcmp(command, "battery") == 0)
+  {
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_PrintBattery(now_ms); }
+    else { AppDiagnostics_AppendSyntax("battery"); }
+  }
+  else if (strcmp(command, "can") == 0)
+  {
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_PrintCan(now_ms); }
+    else { AppDiagnostics_AppendSyntax("can"); }
+  }
+  else if (strcmp(command, "fault") == 0)
+  {
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_PrintFault(); }
+    else { AppDiagnostics_AppendSyntax("fault"); }
   }
   else if (strcmp(command, "clear") == 0)
   {
-    (void)AppDiagnostics_Queue(AppSafety_ClearRecoverableFaults() ? "OK recoverable faults cleared\r\n" :
-                                                                   "ERR non-recoverable fault remains\r\n");
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_HandleClear(); }
+    else { AppDiagnostics_AppendSyntax("clear"); }
+  }
+  else if (strcmp(command, "arm") == 0)
+  {
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_HandleArm(now_ms); }
+    else { AppDiagnostics_AppendSyntax("arm"); }
+  }
+  else if ((strcmp(command, "disarm") == 0) || (strcmp(command, "stop") == 0))
+  {
+    if (strtok(NULL, " \t") == NULL) { AppDiagnostics_HandleStop(); }
+    else { AppDiagnostics_AppendSyntax(command); }
   }
   else if (strcmp(command, "motor") == 0)
   {
-    float motor_a;
-    float motor_b;
-    uint32_t timeout_ms = APP_COMMAND_DEFAULT_TIMEOUT_MS;
-    char *a_text = strtok(NULL, " \t");
-    char *b_text = strtok(NULL, " \t");
-    char *timeout_text = strtok(NULL, " \t");
-    if (!AppDiagnostics_ParseFloat(a_text, &motor_a) ||
-        !AppDiagnostics_ParseFloat(b_text, &motor_b) ||
-        ((timeout_text != NULL) && !AppDiagnostics_ParseU32(timeout_text, &timeout_ms)))
-    {
-      (void)AppDiagnostics_Queue("ERR usage: motor effortA effortB [timeout_ms], range -1..1\r\n");
-    }
-    else
-    {
-      (void)AppDiagnostics_Queue(
-        AppCommand_SubmitMotorEffort(APP_COMMAND_SOURCE_DIAGNOSTIC, motor_a, motor_b, timeout_ms)
-          ? "OK motor effort accepted by shared command path\r\n"
-          : "ERR motor effort rejected\r\n");
-    }
+    AppDiagnostics_HandleMotor(now_ms);
   }
-  else if (strcmp(command, "wheel") == 0)
+  else if (strcmp(command, "watch") == 0)
   {
-    float left;
-    float right;
-    uint32_t timeout_ms = APP_COMMAND_DEFAULT_TIMEOUT_MS;
-    char *left_text = strtok(NULL, " \t");
-    char *right_text = strtok(NULL, " \t");
-    char *timeout_text = strtok(NULL, " \t");
-    if (!AppDiagnostics_ParseFloat(left_text, &left) ||
-        !AppDiagnostics_ParseFloat(right_text, &right) ||
-        ((timeout_text != NULL) && !AppDiagnostics_ParseU32(timeout_text, &timeout_ms)))
-    {
-      (void)AppDiagnostics_Queue("ERR usage: wheel left_cps right_cps [timeout_ms]\r\n");
-    }
-    else
-    {
-      (void)AppDiagnostics_Queue(
-        AppCommand_SubmitWheelRate(APP_COMMAND_SOURCE_DIAGNOSTIC, left, right, timeout_ms)
-          ? "OK wheel command accepted; configuration guards apply\r\n"
-          : "ERR wheel command rejected\r\n");
-    }
-  }
-  else if (strcmp(command, "body") == 0)
-  {
-    float linear;
-    float angular;
-    uint32_t timeout_ms = APP_COMMAND_DEFAULT_TIMEOUT_MS;
-    char *linear_text = strtok(NULL, " \t");
-    char *angular_text = strtok(NULL, " \t");
-    char *timeout_text = strtok(NULL, " \t");
-    if (!AppDiagnostics_ParseFloat(linear_text, &linear) ||
-        !AppDiagnostics_ParseFloat(angular_text, &angular) ||
-        ((timeout_text != NULL) && !AppDiagnostics_ParseU32(timeout_text, &timeout_ms)))
-    {
-      (void)AppDiagnostics_Queue("ERR usage: body linear_mps angular_radps [timeout_ms]\r\n");
-    }
-    else
-    {
-      (void)AppDiagnostics_Queue(
-        AppCommand_SubmitBodyVelocity(APP_COMMAND_SOURCE_DIAGNOSTIC, linear, angular, timeout_ms)
-          ? "OK body command accepted; geometry guards apply\r\n"
-          : "ERR body command rejected\r\n");
-    }
-  }
-  else if (strcmp(command, "pid") == 0)
-  {
-    AppDiagnostics_HandlePid(strtok(NULL, " \t"));
-  }
-  else if (strcmp(command, "drive") == 0)
-  {
-    AppDiagnostics_HandleDrive(strtok(NULL, " \t"));
-  }
-  else if ((strcmp(command, "encoder") == 0) || (strcmp(command, "imu") == 0) ||
-           (strcmp(command, "battery") == 0) || (strcmp(command, "controller") == 0))
-  {
-    AppDiagnostics_PrintStatus();
-  }
-  else if (strcmp(command, "help") == 0)
-  {
-    (void)AppDiagnostics_Queue("cmd: status arm disarm stop clear motor wheel body pid drive encoder imu battery controller help\r\n");
+    AppDiagnostics_HandleWatch(now_ms);
   }
   else
   {
-    (void)AppDiagnostics_Queue("ERR unknown command; use help\r\n");
+    AppDiagnostics_ResponseAppend("ERROR: unknown command '%s'\r\nHint : type 'help'\r\n",
+                                  command);
   }
+  AppDiagnostics_ResponseFinish();
+}
+
+static bool AppDiagnostics_TimeReached(uint32_t now_ms, uint32_t deadline_ms)
+{
+  return ((int32_t)(now_ms - deadline_ms) >= 0);
+}
+
+static void AppDiagnostics_EmitWatch(uint32_t now_ms)
+{
+  AppDiagnostics_ResponseReset();
+  AppDiagnostics_ResponseAppend("\r\n[watch %s]\r\n",
+                                AppDiagnostics_WatchName(g_watch_source));
+  switch (g_watch_source)
+  {
+    case APP_DIAGNOSTIC_WATCH_ENCODER: AppDiagnostics_PrintEncoder(now_ms); break;
+    case APP_DIAGNOSTIC_WATCH_IMU: AppDiagnostics_PrintImu(now_ms); break;
+    case APP_DIAGNOSTIC_WATCH_CAN: AppDiagnostics_PrintCan(now_ms); break;
+    case APP_DIAGNOSTIC_WATCH_OFF:
+    default: return;
+  }
+  AppDiagnostics_ResponseAppend("\r\n> ");
+  (void)AppDiagnostics_QueueCurrentResponse(true);
 }
 
 static void AppDiagnostics_PumpTx(void)
 {
-  uint32_t key;
-  size_t length;
-
-  key = AppPlatform_IrqLock();
+  uint32_t key = AppPlatform_IrqLock();
   if (g_tx_busy)
   {
     AppPlatform_IrqUnlock(key);
@@ -436,12 +823,12 @@ static void AppDiagnostics_PumpTx(void)
     g_tx_busy = false;
     return;
   }
-  length = strnlen(g_active_tx.text, sizeof(g_active_tx.text));
-  if ((length == 0U) || (HAL_UART_Transmit_IT(&huart2, (uint8_t *)g_active_tx.text,
-                                             (uint16_t)length) != HAL_OK))
+  if ((g_active_tx.length == 0U) ||
+      (HAL_UART_Transmit_IT(&huart2, (uint8_t *)g_active_tx.text,
+                           g_active_tx.length) != HAL_OK))
   {
     g_tx_busy = false;
-    g_dropped_lines++;
+    g_dropped_blocks++;
   }
 }
 
@@ -449,39 +836,74 @@ bool AppDiagnostics_Init(void)
 {
   g_rx_queue = osMessageQueueNew(APP_DIAGNOSTIC_RX_QUEUE_DEPTH, sizeof(uint8_t), NULL);
   g_tx_queue = osMessageQueueNew(APP_DIAGNOSTIC_TX_QUEUE_DEPTH,
-                                 sizeof(AppDiagnosticLine), NULL);
+                                 sizeof(AppDiagnosticBlock), NULL);
   g_rx_length = 0U;
   g_tx_busy = false;
-  g_dropped_lines = 0U;
-  if ((g_rx_queue == NULL) || (g_tx_queue == NULL))
-  {
-    return false;
-  }
-  if (HAL_UART_Receive_IT(&huart2, &g_rx_byte, 1U) != HAL_OK)
-  {
-    return false;
-  }
-  (void)AppDiagnostics_Queue("RobotProject STM32 boot\r\n");
-  (void)AppDiagnostics_Queue("firmware=%s state=INIT type=help for commands\r\n", APP_VERSION_STRING);
-  return true;
+  g_rx_overflow_pending = false;
+  g_rx_dropped_bytes = 0U;
+  g_uart_error_count = 0U;
+  g_dropped_blocks = 0U;
+  g_response_truncated = false;
+  g_discard_input_line = false;
+  g_line_too_long_pending = false;
+  g_watch_source = APP_DIAGNOSTIC_WATCH_OFF;
+  g_next_watch_ms = 0U;
+  if ((g_rx_queue == NULL) || (g_tx_queue == NULL)) { return false; }
+  if (HAL_UART_Receive_IT(&huart2, &g_rx_byte, 1U) != HAL_OK) { return false; }
+
+  AppDiagnostics_ResponseReset();
+  AppDiagnostics_ResponseAppend("RobotProject STM32 boot\r\n");
+  AppDiagnostics_ResponseAppend("FW %s / Protocol %u.%u\r\n",
+                                APP_VERSION_STRING,
+                                APP_PROTOCOL_VERSION_MAJOR,
+                                APP_PROTOCOL_VERSION_MINOR);
+  AppDiagnostics_ResponseAppend("Quiet console; type 'help'\r\n\r\n> ");
+  return AppDiagnostics_QueueCurrentResponse(false);
 }
 
-void AppDiagnostics_Process(void)
+void AppDiagnostics_Process(uint32_t now_ms)
 {
   uint8_t byte;
+  bool command_processed = false;
+
+  if (g_rx_overflow_pending)
+  {
+    const uint32_t key = AppPlatform_IrqLock();
+    g_rx_overflow_pending = false;
+    AppPlatform_IrqUnlock(key);
+    g_rx_length = 0U;
+    g_discard_input_line = true;
+    AppDiagnostics_ResponseStart("<input overflow>");
+    AppDiagnostics_ResponseAppend("ERROR: UART input overflow; resend command\r\n");
+    AppDiagnostics_ResponseFinish();
+    command_processed = true;
+  }
 
   while (osMessageQueueGet(g_rx_queue, &byte, NULL, 0U) == osOK)
   {
     if ((byte == '\r') || (byte == '\n'))
     {
-      if (g_rx_length > 0U)
+      if (g_discard_input_line)
+      {
+        g_discard_input_line = false;
+        if (g_line_too_long_pending)
+        {
+          AppDiagnostics_ResponseStart("<line too long>");
+          AppDiagnostics_ResponseAppend("ERROR: command too long\r\n");
+          AppDiagnostics_ResponseFinish();
+          g_line_too_long_pending = false;
+          command_processed = true;
+        }
+      }
+      else if (g_rx_length > 0U)
       {
         g_rx_line[g_rx_length] = '\0';
-        AppDiagnostics_HandleLine(g_rx_line);
+        AppDiagnostics_HandleLine(g_rx_line, now_ms);
         g_rx_length = 0U;
+        command_processed = true;
       }
     }
-    else if ((byte >= 0x20U) && (byte <= 0x7EU))
+    else if (!g_discard_input_line && (byte >= 0x20U) && (byte <= 0x7EU))
     {
       if (g_rx_length < (sizeof(g_rx_line) - 1U))
       {
@@ -490,33 +912,30 @@ void AppDiagnostics_Process(void)
       else
       {
         g_rx_length = 0U;
-        (void)AppDiagnostics_Queue("ERR input line too long\r\n");
+        g_discard_input_line = true;
+        g_line_too_long_pending = true;
       }
     }
   }
-  AppDiagnostics_PumpTx();
-}
 
-void AppDiagnostics_EmitPeriodic(uint32_t now_ms)
-{
-  AppTelemetrySnapshot telemetry;
-  AppTelemetry_GetSnapshot(now_ms, &telemetry);
-  (void)AppDiagnostics_Queue(
-    "tick=%lu state=%s fault=0x%08lx batt_mv=%ld enc_cps=%ld,%ld imu=%u motor=%u wd=%u\r\n",
-    (unsigned long)now_ms, AppState_SystemStateName(telemetry.state.system_state),
-    (unsigned long)telemetry.state.fault_flags,
-    (long)AppDiagnostics_Scaled(telemetry.battery.filtered_battery_voltage, 1000.0f),
-    (long)AppDiagnostics_Scaled(telemetry.encoder_1.filtered_counts_per_second, 1.0f),
-    (long)AppDiagnostics_Scaled(telemetry.encoder_2.filtered_counts_per_second, 1.0f),
-    telemetry.imu.valid ? 1U : 0U, telemetry.motor.standby_asserted ? 1U : 0U,
-    telemetry.supervisor.watchdog_refresh_allowed ? 1U : 0U);
+  if (!command_processed && (g_watch_source != APP_DIAGNOSTIC_WATCH_OFF) &&
+      AppDiagnostics_TimeReached(now_ms, g_next_watch_ms))
+  {
+    AppDiagnostics_EmitWatch(now_ms);
+    g_next_watch_ms = now_ms + (1000U / APP_DIAGNOSTIC_WATCH_DEFAULT_HZ);
+  }
+  AppDiagnostics_PumpTx();
 }
 
 void AppDiagnostics_UartRxComplete(UART_HandleTypeDef *huart)
 {
   if ((huart != NULL) && (huart->Instance == USART2) && (g_rx_queue != NULL))
   {
-    (void)osMessageQueuePut(g_rx_queue, &g_rx_byte, 0U, 0U);
+    if (osMessageQueuePut(g_rx_queue, &g_rx_byte, 0U, 0U) != osOK)
+    {
+      g_rx_dropped_bytes++;
+      g_rx_overflow_pending = true;
+    }
     (void)HAL_UART_Receive_IT(&huart2, &g_rx_byte, 1U);
   }
 }
@@ -533,6 +952,7 @@ void AppDiagnostics_UartError(UART_HandleTypeDef *huart)
 {
   if ((huart != NULL) && (huart->Instance == USART2))
   {
+    g_uart_error_count++;
     g_tx_busy = false;
     (void)HAL_UART_Receive_IT(&huart2, &g_rx_byte, 1U);
   }

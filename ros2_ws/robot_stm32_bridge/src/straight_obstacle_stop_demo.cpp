@@ -53,8 +53,8 @@ double angular_difference(const double first, const double second) {
 class StraightObstacleStopDemo final : public rclcpp::Node {
 public:
   StraightObstacleStopDemo() : Node("straight_obstacle_stop_demo") {
-    forward_speed_mps_ = declare_parameter<double>("forward_speed_mps", 0.05);
-    stop_distance_m_ = declare_parameter<double>("stop_distance_m", 0.35);
+    forward_speed_mps_ = declare_parameter<double>("forward_speed_mps", 0.30);
+    stop_distance_m_ = declare_parameter<double>("stop_distance_m", 0.60);
     front_sector_deg_ = declare_parameter<double>("front_sector_deg", 30.0);
     front_center_deg_ = declare_parameter<double>("front_center_deg", 180.0);
     scan_timeout_ms_ = declare_parameter<int>("scan_timeout_ms", 400);
@@ -70,13 +70,13 @@ public:
         "disarm_service", "/robot_stm32_bridge/disarm");
 
     if (!std::isfinite(forward_speed_mps_) || forward_speed_mps_ <= 0.0 ||
-        forward_speed_mps_ > 0.25 || !std::isfinite(stop_distance_m_) ||
+        forward_speed_mps_ > 0.30 || !std::isfinite(stop_distance_m_) ||
         stop_distance_m_ <= 0.0 || !std::isfinite(front_sector_deg_) ||
         front_sector_deg_ <= 0.0 || front_sector_deg_ > 360.0 ||
         !std::isfinite(front_center_deg_) || scan_timeout_ms_ < 100 ||
         bridge_timeout_ms_ < 100) {
       throw std::invalid_argument("invalid demo parameters: use 0 < "
-                                  "forward_speed_mps <= 0.25, positive "
+                                  "forward_speed_mps <= 0.30, positive "
                                   "stop_distance_m, 0 < front_sector_deg <= "
                                   "360, and timeouts >= 100 ms");
     }
@@ -108,10 +108,10 @@ public:
     status_timer_ = create_wall_timer(
         100ms, std::bind(&StraightObstacleStopDemo::publish_status, this));
 
-    reason_ = "waiting for explicit ~/start";
+    reason_ = "STOPPED; waiting for explicit ~/start";
     publish_zero_twist(false);
     RCLCPP_INFO(get_logger(),
-                "Obstacle-stop demo IDLE: speed %.3f m/s, stop %.3f m, sector "
+                "Obstacle-stop demo STOPPED: speed %.3f m/s, stop %.3f m, sector "
                 "%.1f deg centered %.1f deg in LaserScan frame",
                 forward_speed_mps_, stop_distance_m_, front_sector_deg_,
                 front_center_deg_);
@@ -121,25 +121,16 @@ public:
 
 private:
   enum class State : uint8_t {
-    kIdle = msg::DemoStatus::IDLE,
-    kArming = msg::DemoStatus::ARMING,
-    kDriving = msg::DemoStatus::DRIVING,
     kStopped = msg::DemoStatus::STOPPED,
-    kFault = msg::DemoStatus::FAULT,
+    kRunning = msg::DemoStatus::RUNNING,
   };
 
   const char *state_name() const {
     switch (state_) {
-    case State::kIdle:
-      return "IDLE";
-    case State::kArming:
-      return "ARMING";
-    case State::kDriving:
-      return "DRIVING";
     case State::kStopped:
       return "STOPPED";
-    case State::kFault:
-      return "FAULT";
+    case State::kRunning:
+      return "RUNNING";
     default:
       return "INVALID";
     }
@@ -188,11 +179,7 @@ private:
   void transition(const State next, const std::string &reason) {
     if (state_ != next || reason_ != reason) {
       RCLCPP_INFO(get_logger(), "Demo %s -> %s: %s", state_name(),
-                  next == State::kIdle      ? "IDLE"
-                  : next == State::kArming  ? "ARMING"
-                  : next == State::kDriving ? "DRIVING"
-                  : next == State::kStopped ? "STOPPED"
-                                            : "FAULT",
+                  next == State::kRunning ? "RUNNING" : "STOPPED",
                   reason.c_str());
     }
     state_ = next;
@@ -205,7 +192,7 @@ private:
         scan->angle_increment == 0.0F || !std::isfinite(scan->range_min) ||
         !std::isfinite(scan->range_max) || scan->range_min < 0.0F ||
         scan->range_max <= scan->range_min) {
-      enter_fault("invalid LaserScan metadata");
+      latch_stopped("invalid LaserScan metadata");
       return;
     }
 
@@ -221,6 +208,10 @@ private:
         continue;
       }
       const float range = scan->ranges[index];
+      if (std::isinf(range) && range > 0.0F) {
+        ++valid_samples;
+        continue;
+      }
       if (!std::isfinite(range) || range < scan->range_min ||
           range > scan->range_max) {
         continue;
@@ -233,13 +224,13 @@ private:
     have_scan_ = valid_samples > 0U;
     minimum_front_range_m_ = minimum;
     if (valid_samples == 0U) {
-      if (state_ == State::kArming || state_ == State::kDriving) {
-        enter_fault("no valid LaserScan samples in configured front sector");
+      if (start_pending_ || state_ == State::kRunning) {
+        latch_stopped("no valid LaserScan samples in configured front sector");
       }
       return;
     }
 
-    if ((state_ == State::kArming || state_ == State::kDriving) &&
+    if ((start_pending_ || state_ == State::kRunning) &&
         minimum_front_range_m_ <= static_cast<float>(stop_distance_m_)) {
       obstacle_stop();
     }
@@ -250,8 +241,7 @@ private:
     have_bridge_status_ = true;
     last_bridge_status_received_ = std::chrono::steady_clock::now();
 
-    if ((state_ == State::kStopped || state_ == State::kFault) &&
-        !stamp_is_zero(obstacle_detected_stamp_)) {
+    if (state_ == State::kStopped && !stamp_is_zero(obstacle_detected_stamp_)) {
       if (stamp_is_zero(authority_withdrawn_tx_stamp_) &&
           stamp_nanoseconds(status->last_disarm_tx_stamp) >=
               stamp_nanoseconds(obstacle_detected_stamp_)) {
@@ -271,9 +261,9 @@ private:
 
   void on_start(const std_srvs::srv::Trigger::Request::SharedPtr,
                 std_srvs::srv::Trigger::Response::SharedPtr response) {
-    if (state_ == State::kArming || state_ == State::kDriving) {
+    if (start_pending_ || state_ == State::kRunning) {
       response->success = false;
-      response->message = "demo is already ARMING or DRIVING";
+      response->message = "demo START is pending or already RUNNING";
       return;
     }
     if (!scan_fresh()) {
@@ -281,7 +271,7 @@ private:
       response->message = "fresh /scan is required";
       return;
     }
-    if (!std::isfinite(minimum_front_range_m_) ||
+    if (std::isfinite(minimum_front_range_m_) &&
         minimum_front_range_m_ <= static_cast<float>(stop_distance_m_)) {
       response->success = false;
       response->message = "front sector is blocked or has no valid range";
@@ -306,11 +296,12 @@ private:
     }
 
     clear_stop_observability();
+    start_pending_ = true;
     arm_response_received_ = false;
     arm_response_success_ = false;
     publish_zero_twist(false);
-    transition(State::kArming,
-               "explicit start accepted; requesting bridge arm");
+    transition(State::kStopped,
+               "explicit START accepted; waiting for authority acknowledgement");
     auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
     arm_client_->async_send_request(
         request,
@@ -321,12 +312,13 @@ private:
           arm_response_message_ = result->message;
         });
     response->success = true;
-    response->message = "start accepted; demo entered ARMING";
+    response->message = "START accepted; waiting for bridge authority";
   }
 
   void on_stop(const std_srvs::srv::Trigger::Request::SharedPtr,
                std_srvs::srv::Trigger::Response::SharedPtr response) {
     publish_zero_twist(false);
+    start_pending_ = false;
     request_disarm(true);
     transition(State::kStopped, "explicit stop; STOPPED latched");
     response->success = true;
@@ -372,11 +364,12 @@ private:
   }
 
   void obstacle_stop() {
-    if (state_ == State::kStopped) {
+    if (state_ == State::kStopped && !start_pending_) {
       return;
     }
     obstacle_detected_stamp_ = now();
     publish_zero_twist(true);
+    start_pending_ = false;
     request_disarm(true);
     transition(State::kStopped,
                "front obstacle threshold reached; STOPPED latched");
@@ -385,13 +378,15 @@ private:
                 minimum_front_range_m_, stop_distance_m_);
   }
 
-  void enter_fault(const std::string &reason) {
-    const bool newly_faulted = state_ != State::kFault;
+  void latch_stopped(const std::string &reason) {
+    const bool withdrawal_needed =
+        start_pending_ || state_ == State::kRunning;
+    start_pending_ = false;
     publish_zero_twist(false);
-    if (newly_faulted) {
+    if (withdrawal_needed) {
       request_disarm(false);
     }
-    transition(State::kFault, reason);
+    transition(State::kStopped, reason + "; STOPPED latched");
   }
 
   void clear_stop_observability() {
@@ -408,34 +403,36 @@ private:
       request_disarm(false);
     }
 
-    if (state_ == State::kArming || state_ == State::kDriving) {
+    if (start_pending_ || state_ == State::kRunning) {
       if (!scan_fresh()) {
-        enter_fault("LaserScan timeout");
+        latch_stopped("LaserScan timeout");
       } else if (!bridge_status_fresh()) {
-        enter_fault("bridge status timeout");
+        latch_stopped("bridge status timeout");
       } else if (!motion_path_ready()) {
-        enter_fault("CAN/protocol/STM32 health lost");
+        latch_stopped("CAN/protocol/STM32 health lost");
       }
     }
 
-    if (state_ == State::kArming) {
+    if (start_pending_) {
       if (arm_response_received_ && !arm_response_success_) {
-        enter_fault("bridge arm rejected: " + arm_response_message_);
+        latch_stopped("bridge arm rejected: " + arm_response_message_);
       } else if (arm_response_received_ && bridge_status_.authority_armed) {
-        transition(State::kDriving, "STM32 authority acknowledgement observed");
+        start_pending_ = false;
+        transition(State::kRunning,
+                   "explicit START and STM32 authority acknowledgement observed");
       }
-    } else if (state_ == State::kDriving && !bridge_status_.authority_armed) {
-      enter_fault("motion authority unexpectedly cleared");
+    } else if (state_ == State::kRunning &&
+               !bridge_status_.authority_armed) {
+      latch_stopped("motion authority unexpectedly cleared");
     }
 
-    if (state_ == State::kDriving) {
+    if (state_ == State::kRunning) {
       publish_drive_twist();
     } else {
       publish_zero_twist(false);
     }
 
-    if ((state_ == State::kStopped || state_ == State::kFault) &&
-        have_bridge_status_ &&
+    if (state_ == State::kStopped && !start_pending_ && have_bridge_status_ &&
         (bridge_status_.authority_armed || bridge_status_.arm_requested) &&
         age_ms(last_disarm_attempt_) >= 100U) {
       request_disarm(false);
@@ -471,8 +468,8 @@ private:
     status_publisher_->publish(message);
   }
 
-  double forward_speed_mps_{0.05};
-  double stop_distance_m_{0.35};
+  double forward_speed_mps_{0.30};
+  double stop_distance_m_{0.60};
   double front_sector_deg_{30.0};
   double front_center_deg_{180.0};
   int scan_timeout_ms_{400};
@@ -483,11 +480,12 @@ private:
   std::string arm_service_name_;
   std::string disarm_service_name_;
 
-  State state_{State::kIdle};
+  State state_{State::kStopped};
   std::string reason_;
   bool have_scan_{false};
   bool have_bridge_status_{false};
   bool startup_disarm_requested_{false};
+  bool start_pending_{false};
   bool arm_response_received_{false};
   bool arm_response_success_{false};
   std::string arm_response_message_;

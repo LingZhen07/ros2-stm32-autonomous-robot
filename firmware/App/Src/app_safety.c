@@ -2,6 +2,7 @@
 
 #include "app_control.h"
 #include "app_drivetrain.h"
+#include "app_encoder.h"
 #include "app_motor.h"
 #include "app_platform.h"
 #include "app_state.h"
@@ -109,9 +110,14 @@ void AppSafety_Update(uint32_t now_ms)
 
 bool AppSafety_ClearRecoverableFaults(void)
 {
-  const uint32_t recoverable = APP_FAULT_COMMAND_TIMEOUT |
-                               APP_FAULT_INVALID_MOTOR_COMMAND |
-                               APP_FAULT_CONTROL_SATURATION;
+  uint32_t recoverable = APP_FAULT_COMMAND_TIMEOUT |
+                         APP_FAULT_INVALID_MOTOR_COMMAND |
+                         APP_FAULT_CONTROL_SATURATION;
+
+  if (AppEncoder_AllValid(HAL_GetTick()))
+  {
+    recoverable |= APP_FAULT_ENCODER_VALIDITY;
+  }
 
   AppCommand_Disarm();
   AppMotor_ForceSafe();

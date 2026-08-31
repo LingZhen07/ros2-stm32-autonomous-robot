@@ -97,7 +97,7 @@ adjusted by the supplied sample age where available.
 |---|---|---|
 | `/robot_stm32_bridge/arm` | `std_srvs/srv/Trigger` | Requests authority only after all health/readiness gates pass |
 | `/robot_stm32_bridge/disarm` | `std_srvs/srv/Trigger` | Withdraws authority; sends DISABLED first only if motion had been explicitly requested |
-| `/straight_obstacle_stop_demo/start` | `std_srvs/srv/Trigger` | Explicitly starts/restarts ARMING after validating scan and bridge |
+| `/straight_obstacle_stop_demo/start` | `std_srvs/srv/Trigger` | Explicitly requests a RUNNING episode after validating scan and bridge; authority acknowledgement is required |
 | `/straight_obstacle_stop_demo/stop` | `std_srvs/srv/Trigger` | Publishes zero, disarms, and latches STOPPED |
 
 Bridge startup, process restart, transport reconnection, STM32 restart/session replacement,
@@ -121,8 +121,8 @@ DISARMED. `/cmd_vel` traffic alone never arms the robot.
 
 | Parameter | Default | Meaning |
 |---|---:|---|
-| `forward_speed_mps` | `0.05` | Low commissioning forward speed |
-| `stop_distance_m` | `0.35` | Front obstacle trigger distance |
+| `forward_speed_mps` | `0.30` | Highest currently justified commissioning speed; cannot exceed 0.30 m/s |
+| `stop_distance_m` | `0.60` | Conservative commissioning obstacle threshold at 0.30 m/s |
 | `front_sector_deg` | `30.0` | Full angular width of evaluated sector |
 | `front_center_deg` | `180.0` | Robot-forward in the frozen yaw-pi `laser_frame` |
 | `scan_timeout_ms` | `400` | Stale-scan fail-safe deadline |
@@ -130,9 +130,9 @@ DISARMED. `/cmd_vel` traffic alone never arms the robot.
 
 These values are commissioning defaults, not frozen safety specifications. Override them through a
 launch parameter file or `--ros-args -p name:=value` only after checking the real test setup.
-The firmware accepts at most 0.30 m/s body-linear speed in this commissioning build; the existing
-0.05 m/s demo default remains the required first straight-drive acceptance speed and may only be
-raised after physical closed-loop evidence.
+The firmware accepts at most 0.30 m/s body-linear speed in this commissioning build. The 0.60 m
+threshold is deliberately conservative but is not a frozen robot safety distance: physical stopping
+distance at 0.30 m/s must be measured before reducing it or claiming a final safety specification.
 
 ## Protocol behavior
 
@@ -160,19 +160,19 @@ other than exactly 1.0 is rejected and blocks motion. Sequence gaps, duplicates,
 counted. Recognized CAN errors, bus-off, socket failure, stale status, critical STM32 faults, and
 invalid commands converge to the safe path.
 
-## Demo state machine
+## Demo state model
 
 ```text
-IDLE --explicit start--> ARMING --authority confirmed--> DRIVING
-  ^                         |                              |
-  |                         +--invalid/stale------------> FAULT
-  |                                                        |
-  +--new explicit start <--- STOPPED <---obstacle----------+
+STOPPED --explicit START + authority confirmed--> RUNNING
+   ^                                                |
+   +--obstacle / stale / fault / explicit STOP------+
 ```
 
-IDLE, ARMING, STOPPED, and FAULT continuously publish zero Twist. An obstacle at or below the
-configured distance causes an immediate zero publication followed by bridge disarm. STOPPED is
-latched when the obstacle disappears. Only another explicit `~/start` may begin a new run.
+Only `STOPPED` and `RUNNING` are semantic states. While the asynchronous authority request is
+pending, the node remains STOPPED and publishes zero. A valid finite front-sector sample at or below
+the configured distance causes zero Twist publication and bridge disarm in the same 20 ms control
+cycle. STOPPED remains latched after obstacle removal. Only another explicit `~/start` may begin a
+new run; stale commands, old authority, and obstacle removal cannot restart motion.
 
 `DemoStatus` records obstacle detection, zero-Twist publication, disarm request, bridge authority
 withdrawal transmission, and safe STM32 status confirmation timestamps. These measure software and
@@ -231,6 +231,44 @@ ros2 launch robot_stm32_bridge bridge.launch.py
 Bridge-only launch remains DISARMED. Physical-link acceptance is complete: the production bridge
 exchanged the required host and STM32 frames with Protocol 1.0 valid and no abnormal CAN errors.
 
-First motion remains a separate safety decision gate. Do not call the demo `~/start` service until
-STM32 reports BODY_COMMAND_READY and the physical commissioning area, supports, obstacle, and
-emergency intervention are deliberately prepared.
+The final M5 motion gate has passed on real hardware. Future runs must still confirm
+BODY_COMMAND_READY and deliberately prepare the commissioning area, obstacle, and emergency
+intervention before calling the demo `~/start` service.
+
+## Final M5 physical demo
+
+The systemd service already owns the single production bridge. The demo launch therefore starts
+only `straight_obstacle_stop_demo`:
+
+```bash
+source /opt/ros/humble/setup.bash
+source /data/ros2_ws/install/setup.bash
+ros2 launch robot_stm32_bridge straight_obstacle_stop_demo.launch.py
+```
+
+After confirming the real `/scan` is active and the commissioning area is prepared, START and STOP
+are explicit:
+
+```bash
+ros2 service call /straight_obstacle_stop_demo/start std_srvs/srv/Trigger '{}'
+ros2 service call /straight_obstacle_stop_demo/stop std_srvs/srv/Trigger '{}'
+ros2 topic echo /straight_obstacle_stop_demo/status --once
+```
+
+**Status: PASS.** The accepted sequence was explicit START, continuous 0.30 m/s closed-loop straight
+motion, a real RPLIDAR A1 `/scan` obstacle inside the 30° frontal sector at 0.60 m, zero velocity and
+Motion Authority withdrawal, STM32 safe stop, obstacle removal with STOPPED still latched, then a
+new explicit START. The STOP service is the operator's immediate ROS-side withdrawal command; STM32
+safety remains authoritative.
+
+Observed from obstacle detection in the successful demo:
+
+| Confirmation | Observed interval |
+|---|---:|
+| Zero velocity command | approximately `0.075 ms` |
+| Motion Authority withdrawal | approximately `1.276 ms` |
+| STM32 stop confirmation | approximately `30.8 ms` |
+
+These are observed measurements from the successful acceptance run, not guaranteed worst-case
+safety limits. The accepted 0.30 m/s value is the current commissioning limit, not the robot's
+physical maximum.

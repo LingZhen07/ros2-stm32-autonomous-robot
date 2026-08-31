@@ -28,5 +28,6 @@ typedef struct
 bool AppEncoder_Init(void);
 void AppEncoder_Sample(uint32_t now_ms);
 void AppEncoder_GetSnapshot(AppEncoderId id, uint32_t now_ms, AppEncoderSnapshot *snapshot);
+bool AppEncoder_AllValid(uint32_t now_ms);
 
 #endif /* APP_ENCODER_H */

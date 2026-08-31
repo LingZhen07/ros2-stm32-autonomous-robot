@@ -7,8 +7,7 @@
 #include <stdint.h>
 
 bool AppDiagnostics_Init(void);
-void AppDiagnostics_Process(void);
-void AppDiagnostics_EmitPeriodic(uint32_t now_ms);
+void AppDiagnostics_Process(uint32_t now_ms);
 void AppDiagnostics_UartRxComplete(UART_HandleTypeDef *huart);
 void AppDiagnostics_UartTxComplete(UART_HandleTypeDef *huart);
 void AppDiagnostics_UartError(UART_HandleTypeDef *huart);

@@ -45,6 +45,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/app_battery.c
+    App/Src/app_can.c
     App/Src/app_command.c
     App/Src/app_control.c
     App/Src/app_diagnostics.c
@@ -52,6 +53,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/app_encoder.c
     App/Src/app_imu.c
     App/Src/app_motor.c
+    App/Src/app_protocol.c
     App/Src/app_rtos.c
     App/Src/app_runtime.c
     App/Src/app_safety.c
@@ -78,4 +80,12 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
     # Add user defined libraries
+)
+
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+            ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+            ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.bin
+    COMMENT "Generating Intel HEX and raw binary firmware images"
 )

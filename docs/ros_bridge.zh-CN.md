@@ -94,7 +94,7 @@ STM32 不提供姿态，因此桥接设置 `orientation_covariance[0] = -1`，�
 |---|---|---|
 | `/robot_stm32_bridge/arm` | `std_srvs/srv/Trigger` | 仅在所有健康/就绪门通过后请求运动授权 |
 | `/robot_stm32_bridge/disarm` | `std_srvs/srv/Trigger` | 撤销 Authority；仅在曾显式请求 Motion 时先发 DISABLED |
-| `/straight_obstacle_stop_demo/start` | `std_srvs/srv/Trigger` | 检查 Scan/Bridge 后显式启动或重新启动 ARMING |
+| `/straight_obstacle_stop_demo/start` | `std_srvs/srv/Trigger` | 检查 Scan/Bridge 后显式请求一次 RUNNING；必须等待 Authority ACK |
 | `/straight_obstacle_stop_demo/stop` | `std_srvs/srv/Trigger` | 发布零速度、Disarm 并锁存 STOPPED |
 
 桥接启动、进程重启、传输重连、STM32 重启或会话替换、协议违规、状态超时、无效 Twist
@@ -117,8 +117,8 @@ STM32 不提供姿态，因此桥接设置 `orientation_covariance[0] = -1`，�
 
 | 参数 | 默认值 | 含义 |
 |---|---:|---|
-| `forward_speed_mps` | `0.05` | 低速调试前进速度 |
-| `stop_distance_m` | `0.35` | 前方障碍物触发距离 |
+| `forward_speed_mps` | `0.30` | 当前最高合理 Commissioning Speed；不得超过 0.30 m/s |
+| `stop_distance_m` | `0.60` | 0.30 m/s 下的保守 Commissioning 障碍物阈值 |
 | `front_sector_deg` | `30.0` | 前方检测扇区总角宽 |
 | `front_center_deg` | `180.0` | 已冻结 yaw=π 的 `laser_frame` 中，机器人前方对应的角度 |
 | `scan_timeout_ms` | `400` | Scan 过期的故障安全截止时间 |
@@ -126,8 +126,8 @@ STM32 不提供姿态，因此桥接设置 `orientation_covariance[0] = -1`，�
 
 这些是调试默认值，不是已冻结的机器人安全规格。只有在检查真实测试环境后，才能通过
 Launch 参数文件或 `--ros-args -p name:=value` 覆盖。
-该调试固件最多接受 0.30 m/s Body Linear Speed；现有 0.05 m/s Demo 默认值仍是首次直行验收
-要求的速度，只有取得真实闭环证据后才能提高。
+该调试固件最多接受 0.30 m/s Body Linear Speed。0.60 m 阈值有意保持保守，但不是冻结的机器人
+安全距离；在降低该值或声明最终安全规格前，必须实测 0.30 m/s 的物理停车距离。
 
 ## 协议行为
 
@@ -154,19 +154,18 @@ HOST_HEARTBEAT(BRIDGE_READY)
 阻断运动。Sequence Gap、Duplicate、Old Frame 会计数。CAN Error、Bus-off、Socket Failure、
 Stale Status、STM32 Critical Fault 和 Invalid Command 都进入安全路径。
 
-## 演示状态机
+## 演示状态模型
 
 ```text
-IDLE --显式 Start--> ARMING --Authority 确认--> DRIVING
-  ^                       |                         |
-  |                       +--Invalid/Stale-------> FAULT
-  |                                                 |
-  +--新的显式 Start <----- STOPPED <---Obstacle----+
+STOPPED --显式 START + Authority 确认--> RUNNING
+   ^                                      |
+   +--Obstacle / Stale / Fault / STOP-----+
 ```
 
-IDLE、ARMING、STOPPED 和 FAULT 持续发布 Zero Twist。前方障碍物距离小于等于设定值时，
-立即发布 Zero，然后调用 Bridge Disarm。障碍物移除后，STOPPED 仍保持锁存；只有新的显式
-`~/start` 才能开始下一次运行。
+仅有 `STOPPED` 和 `RUNNING` 两种语义状态。异步 Authority 请求等待期间仍保持 STOPPED 并持续
+发布 Zero Twist。前方扇区任一有效有限样本小于等于阈值时，在同一个 20 ms Control Cycle 内
+发布 Zero Twist 并调用 Bridge Disarm。障碍物移除后 STOPPED 仍锁存；只有新的显式 `~/start`
+才能开始下一次运行，旧命令、旧 Authority 和障碍物移除都不能自动恢复运动。
 
 `DemoStatus` 记录障碍物检测、Zero Twist 发布、Disarm 请求、Bridge Authority Withdrawal
 发送以及 STM32 Safe Status 确认时间戳。这些仅为软件/命令路径时序，不是物理停车距离证据。
@@ -217,5 +216,40 @@ ros2 launch robot_stm32_bridge bridge.launch.py
 Bridge-only Launch 始终保持 DISARMED。物理链路已通过 Production Bridge 验收：Host/STM32
 必需帧双向交换，Protocol 1.0 有效且 CAN Error 无异常。
 
-第一次运动仍是独立的安全决策门。在 STM32 报告 BODY_COMMAND_READY，并完成物理测试区域、
-支撑、障碍物和紧急人工干预准备之前，不得调用演示 `~/start`。
+最终 M5 运动决策门已在实机通过。后续运行仍必须确认 BODY_COMMAND_READY，并在调用 Demo
+`~/start` 前准备好 Commissioning 区域、障碍物与紧急人工干预。
+
+## 最终 M5 实机演示
+
+systemd Service 已独占唯一 Production Bridge，因此 Demo Launch 只启动
+`straight_obstacle_stop_demo`：
+
+```bash
+source /opt/ros/humble/setup.bash
+source /data/ros2_ws/install/setup.bash
+ros2 launch robot_stm32_bridge straight_obstacle_stop_demo.launch.py
+```
+
+确认真实 `/scan` 正常且 Commissioning 区域准备完成后，START/STOP 均为显式操作：
+
+```bash
+ros2 service call /straight_obstacle_stop_demo/start std_srvs/srv/Trigger '{}'
+ros2 service call /straight_obstacle_stop_demo/stop std_srvs/srv/Trigger '{}'
+ros2 topic echo /straight_obstacle_stop_demo/status --once
+```
+
+**状态：PASS。** 已验收顺序为：显式 START、持续 0.30 m/s 闭环直行、真实 RPLIDAR A1
+`/scan` 在 30° 前方扇区和 0.60 m 阈值内检出障碍物、Zero Velocity 与 Motion Authority
+Withdrawal、STM32 Safe Stop、移除障碍物后 STOPPED 仍锁存、再发出新的显式 START。STOP
+Service 是操作员的即时 ROS 侧撤权命令；STM32 Safety 保持权威。
+
+成功 Demo 中从 Obstacle Detection 起的观测值：
+
+| 确认事件 | 观测时间 |
+|---|---:|
+| Zero Velocity Command | 约 `0.075 ms` |
+| Motion Authority Withdrawal | 约 `1.276 ms` |
+| STM32 Stop Confirmation | 约 `30.8 ms` |
+
+以上是成功验收运行的观测测量值，不是有保证的最坏情况安全上限。已验收的 0.30 m/s 是当前
+Commissioning Limit，不代表机器人物理最高速度。
