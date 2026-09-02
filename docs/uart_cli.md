@@ -4,7 +4,7 @@
 
 ## Purpose and safety boundary
 
-USART2 is the permanent low-rate commissioning and diagnostic console in the production
+USART2 is the low-rate commissioning and diagnostic console in the production
 firmware. It is not a test application. Motor commands enter the shared command model, Safety
 Supervisor, and production motor-output layer; the console cannot bypass safety or take control
 while CAN motion authority is armed.
@@ -102,7 +102,7 @@ Watch is always off after reset and has a fixed 1 Hz rate. There is no high-rate
 - Valid states: all runtime states.
 - Effect: reports firmware, system state, fault word, motor/STBY state, raw encoder-acquisition
   health, IMU health, FDCAN state, current authority owner, and BODY_VELOCITY readiness.
-- Safety: read-only. `Body Cmd : READY` means the verified drivetrain configuration, operating
+- Safety: read-only. `Body Cmd : READY` means the drivetrain configuration, operating
   envelope, and both wheel controllers are configured; runtime authority and health gates still
   apply before motion.
 - Example response:
@@ -162,7 +162,7 @@ Left  : total=10608 cps=0.0 valid=yes age=2 ms
 - Arguments/units: none; ADC in counts/V, battery estimate in V, age in ms.
 - Valid states: all runtime states.
 - Effect: reports measurement validity, raw ADC, ADC voltage, filtered battery estimate, and
-  whether the divider calibration is verified or still commissioning-only.
+  whether the divider is calibrated or still commissioning-only.
 - Safety: read-only; this command does not invent an undervoltage threshold.
 - Example: `battery`
 - Rejection: any argument.
@@ -269,7 +269,7 @@ is lost; it is not generated merely because Mode is DISABLED, Arm is No, and Mot
 - Rejection: syntax/nonfinite value, effort out of range, duration out of range, missing arm,
   active CAN authority, critical fault, or shared command rejection.
 
-This command can move real hardware. Use only under the project’s physical motor-acceptance
+This command can move real hardware. Use only under the project’s physical motor-test safety
 conditions with wheels clear, a reachable power disconnect, and `stop` ready.
 
 ## Watch mode

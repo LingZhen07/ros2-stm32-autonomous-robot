@@ -4,7 +4,7 @@
 
 ## 用途与安全边界
 
-USART2 是生产固件中永久保留的低速标定与诊断控制台，不是测试应用。电机命令会进入共享
+USART2 是生产固件中的低速标定与诊断控制台，不是测试应用。电机命令会进入共享
 Command Model、Safety Supervisor 和生产 Motor Output Layer；控制台不能绕过安全逻辑，也不能在
 CAN Motion Authority 已 Armed 时夺取控制权。
 
@@ -97,7 +97,7 @@ drivetrain configuration 命令已不属于这个轻量控制台。生产控制�
 - 有效状态：全部运行状态。
 - 作用：显示 Firmware、System State、Fault Word、Motor/STBY、Raw Encoder Acquisition
   Health、IMU Health、FDCAN State、当前 Authority Owner 和 BODY_VELOCITY Readiness。
-- 安全：只读。`Body Cmd : READY` 表示已验证 Drivetrain Configuration、Operating Envelope
+- 安全：只读。`Body Cmd : READY` 表示 Drivetrain Configuration、Operating Envelope
   和两路 Wheel Controller 均已配置；运动仍必须通过运行时 Authority 与 Health Gate。
 - 响应示例：
 
@@ -154,7 +154,7 @@ Left  : total=10608 cps=0.0 valid=yes age=2 ms
 - 参数/单位：无；ADC 使用 Counts/V，Battery Estimate 使用 V，Age 使用 ms。
 - 有效状态：全部运行状态。
 - 作用：显示 Measurement Validity、Raw ADC、ADC Voltage、Filtered Battery Estimate，并说明
-  Divider Calibration 已验证还是仍处于 Commissioning。
+  Divider 是否已标定，或仍仅用于 Commissioning。
 - 安全：只读；该命令不会凭假设创建欠压阈值。
 - 示例：`battery`
 - 拒绝：任何参数。
@@ -259,7 +259,7 @@ Disabled/Disarmed Command 被明确视为有意的安全状态，而不是 Timeo
 - 拒绝：语法/非有限值、Effort 越界、Duration 越界、未 Arm、CAN Authority Active、Critical
   Fault 或 Shared Command Reject。
 
-该命令可使真实硬件运动。只能在项目规定的 Physical Motor Acceptance 条件下使用：车轮悬空或
+该命令可使真实硬件运动。只能在项目规定的实机电机测试安全条件下使用：车轮悬空或
 运动区域安全、电源可立即切断，并随时准备发送 `stop`。
 
 ## Watch 模式

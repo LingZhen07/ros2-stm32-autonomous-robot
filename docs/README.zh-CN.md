@@ -10,24 +10,24 @@
 |---|---|---|
 | [Hardware Baseline and STM32 Pin Map](hardware.md) | English | Hardware Model、Pin Map、Peripheral Ownership、Geometry |
 | [硬件基线与 STM32 Pin Map](hardware.zh-CN.md) | 中文 | 硬件型号、Pin Map、外设归属、机器人几何 |
-| [Orange Pi / STM32 ROS Bridge](ros_bridge.md) | English | SocketCAN、Protocol 1.0 Bridge、ROS Interface 与 M5 Demo |
-| [Orange Pi / STM32 ROS 桥接](ros_bridge.zh-CN.md) | 中文 | SocketCAN、Protocol 1.0 桥接、ROS 接口与 M5 演示 |
-| [STM32 M1-M5 Production Firmware](firmware.md) | English | Accepted Real-time Foundation、Protocol v1/M5 Firmware Integration、Safety 与 Acceptance Boundary |
-| [STM32 M1-M5 生产固件](firmware.zh-CN.md) | 中文 | 已验收实时基础、Protocol v1/M5 固件集成、安全与验收边界 |
-| [STM32 USART2 Production CLI](uart_cli.md) | English | Permanent Command、Output Rate、Commissioning 与 Safety Reference |
-| [STM32 USART2 生产版 CLI](uart_cli.zh-CN.md) | 中文 | 永久命令、输出频率、标定与安全完整手册 |
+| [Orange Pi / STM32 ROS Bridge](ros_bridge.md) | English | SocketCAN、Protocol 1.0 Bridge、ROS Interface 与 Obstacle-stop Demo |
+| [Orange Pi / STM32 ROS 桥接](ros_bridge.zh-CN.md) | 中文 | SocketCAN、Protocol 1.0 桥接、ROS 接口与遇障停车演示 |
+| [STM32 Real-Time Control Firmware](firmware.md) | English | MCU Peripheral、Real-time Control、CAN FD、Safety 与 Drivetrain Commissioning |
+| [STM32 实时控制固件](firmware.zh-CN.md) | 中文 | MCU 外设、实时控制、CAN FD、安全与底盘调试 |
+| [STM32 USART2 Engineering Console](uart_cli.md) | English | Command、Output Rate、Commissioning 与 Safety Reference |
+| [STM32 USART2 工程控制台](uart_cli.zh-CN.md) | 中文 | 命令、输出频率、标定与安全手册 |
 | `README.md` | English | 文档索引与维护规则 |
 | `README.zh-CN.md` | 中文 | 中文索引与维护规则 |
 
-## 状态定义
+## 未决项标签
 
-| 状态 | 使用场景 |
+| 标签 | 仅在以下情况使用 |
 |---|---|
-| `FROZEN` | 已验收并在后续阶段保持稳定 |
-| `VERIFIED` | 已有真实系统证据支持 |
-| `IN PROGRESS` | 当前集成项 |
-| `PROPOSED` | 等待验证的候选方案 |
+| `IN PROGRESS` | 结果尚未确定的当前工作 |
+| `PROPOSED` | 等待决策或测量的候选项 |
 | `TBD` | 有意保留的未决项 |
+
+既有配置和实测事实直接陈述，不附加生命周期标签。
 
 ## 知识库更新触发条件
 
@@ -57,4 +57,4 @@
 - Pin、Peripheral、Topic、Frame、Register、Protocol Name 保持精确；
 - 实测数据附带验收上下文。
 
-假设项保持 `PROPOSED` 或 `TBD`，获得真实证据后再升级为 `VERIFIED` 或 `FROZEN`。
+未决假设保持 `PROPOSED` 或 `TBD`；既有事实直接陈述。

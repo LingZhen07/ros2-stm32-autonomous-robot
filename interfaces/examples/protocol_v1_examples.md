@@ -1,8 +1,8 @@
 # Protocol v1 Golden Frames
 
-Status: **FROZEN**. Hex bytes are shown in wire order. Every frame is a Standard-ID CAN FD data
-frame with BRS enabled. These examples are normative serializer/decoder fixtures, not simulated
-hardware evidence.
+Hex bytes are shown in wire order. Every frame is a Standard-ID CAN FD data frame with BRS
+enabled. These examples are normative serializer/decoder fixtures, not simulated hardware
+evidence.
 
 ## Host heartbeat (`0x082`, 16 bytes)
 
@@ -59,7 +59,7 @@ angular_velocity     = -0.500 rad/s -> wire -500
 ### Sequence wrap and zero velocity
 
 The following two zero-velocity BODY_VELOCITY frames are consecutive. `0x0000` is newer than
-`0xFFFF` under the frozen modulo comparison.
+`0xFFFF` under the defined modulo comparison.
 
 ```text
 sequence 0xFFFF:

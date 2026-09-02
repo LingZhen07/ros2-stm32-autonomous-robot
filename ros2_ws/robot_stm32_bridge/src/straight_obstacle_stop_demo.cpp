@@ -13,6 +13,8 @@
 #include "rclcpp/rclcpp.hpp"
 #include "robot_stm32_bridge/msg/bridge_status.hpp"
 #include "robot_stm32_bridge/msg/demo_status.hpp"
+#include "robot_stm32_bridge/scan_validity.hpp"
+#include "robot_stm32_bridge/straight_obstacle_stop_demo.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
@@ -25,6 +27,7 @@ constexpr uint16_t kMotionMotorAuthorized = 1U << 7U;
 constexpr uint16_t kMotionStbyEnabled = 1U << 8U;
 constexpr uint16_t kMotionBodyCommandReady = 1U << 15U;
 constexpr double kPi = 3.14159265358979323846;
+constexpr int64_t kScanFutureToleranceNs = 50LL * 1000000LL;
 
 int64_t stamp_nanoseconds(const builtin_interfaces::msg::Time &stamp) {
   return static_cast<int64_t>(stamp.sec) * 1000000000LL + stamp.nanosec;
@@ -52,7 +55,8 @@ double angular_difference(const double first, const double second) {
 
 class StraightObstacleStopDemo final : public rclcpp::Node {
 public:
-  StraightObstacleStopDemo() : Node("straight_obstacle_stop_demo") {
+  explicit StraightObstacleStopDemo(const rclcpp::NodeOptions &options)
+      : Node("straight_obstacle_stop_demo", options) {
     forward_speed_mps_ = declare_parameter<double>("forward_speed_mps", 0.30);
     stop_distance_m_ = declare_parameter<double>("stop_distance_m", 0.60);
     front_sector_deg_ = declare_parameter<double>("front_sector_deg", 30.0);
@@ -151,9 +155,15 @@ private:
         std::min<int64_t>(age, std::numeric_limits<uint32_t>::max()));
   }
 
+  ScanValidity scan_validity() const {
+    return evaluate_scan_validity(
+        have_scan_, age_ms(last_scan_received_),
+        static_cast<uint32_t>(scan_timeout_ms_), last_scan_source_stamp_, now(),
+        kScanFutureToleranceNs);
+  }
+
   bool scan_fresh() const {
-    return have_scan_ && age_ms(last_scan_received_) <=
-                             static_cast<uint32_t>(scan_timeout_ms_);
+    return scan_validity() == ScanValidity::kValid;
   }
 
   bool bridge_status_fresh() const {
@@ -221,6 +231,7 @@ private:
     }
 
     last_scan_received_ = std::chrono::steady_clock::now();
+    last_scan_source_stamp_ = scan->header.stamp;
     have_scan_ = valid_samples > 0U;
     minimum_front_range_m_ = minimum;
     if (valid_samples == 0U) {
@@ -266,9 +277,10 @@ private:
       response->message = "demo START is pending or already RUNNING";
       return;
     }
-    if (!scan_fresh()) {
+    const ScanValidity current_scan_validity = scan_validity();
+    if (current_scan_validity != ScanValidity::kValid) {
       response->success = false;
-      response->message = "fresh /scan is required";
+      response->message = scan_validity_reason(current_scan_validity);
       return;
     }
     if (std::isfinite(minimum_front_range_m_) &&
@@ -404,8 +416,9 @@ private:
     }
 
     if (start_pending_ || state_ == State::kRunning) {
-      if (!scan_fresh()) {
-        latch_stopped("LaserScan timeout");
+      const ScanValidity current_scan_validity = scan_validity();
+      if (current_scan_validity != ScanValidity::kValid) {
+        latch_stopped(scan_validity_reason(current_scan_validity));
       } else if (!bridge_status_fresh()) {
         latch_stopped("bridge status timeout");
       } else if (!motion_path_ready()) {
@@ -496,6 +509,7 @@ private:
   std::chrono::steady_clock::time_point last_disarm_attempt_{};
 
   builtin_interfaces::msg::Time obstacle_detected_stamp_{};
+  builtin_interfaces::msg::Time last_scan_source_stamp_{};
   builtin_interfaces::msg::Time zero_twist_published_stamp_{};
   builtin_interfaces::msg::Time disarm_requested_stamp_{};
   builtin_interfaces::msg::Time authority_withdrawn_tx_stamp_{};
@@ -516,17 +530,7 @@ private:
 
 } // namespace robot_stm32_bridge
 
-int main(int argc, char **argv) {
-  rclcpp::init(argc, argv);
-  try {
-    rclcpp::spin(
-        std::make_shared<robot_stm32_bridge::StraightObstacleStopDemo>());
-  } catch (const std::exception &exception) {
-    RCLCPP_FATAL(rclcpp::get_logger("straight_obstacle_stop_demo"), "%s",
-                 exception.what());
-    rclcpp::shutdown();
-    return 1;
-  }
-  rclcpp::shutdown();
-  return 0;
+std::shared_ptr<rclcpp::Node> robot_stm32_bridge::make_straight_obstacle_stop_demo(
+    const rclcpp::NodeOptions &options) {
+  return std::make_shared<StraightObstacleStopDemo>(options);
 }

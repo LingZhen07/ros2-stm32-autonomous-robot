@@ -1,12 +1,10 @@
 # Orange Pi / STM32 ROS Bridge
 
-Status: **VERIFIED — physical CAN FD accepted; production startup finalized**
-
 Chinese counterpart: [ros_bridge.zh-CN.md](ros_bridge.zh-CN.md)
 
 ## Scope
 
-`robot_stm32_bridge` is the permanent ROS 2 Humble boundary between Linux SocketCAN and frozen
+`robot_stm32_bridge` is the ROS 2 Humble boundary between Linux SocketCAN and
 RobotProject Communication Protocol 1.0. It owns transport, host sessions, heartbeat, authority,
 body-command serialization, telemetry decoding, and ROS diagnostics. Wheel control, motor safety,
 sensor acquisition, watchdog behavior, and fault enforcement remain on STM32.
@@ -20,37 +18,36 @@ STM32 -> RK3588 CAN3 -> SocketCAN can3 -> robot_stm32_bridge -> ROS telemetry
 /scan -> straight_obstacle_stop_demo -> /cmd_vel
 ```
 
-## Status boundary
+## CAN FD configuration
 
-| Item | Status |
+| Item | Configuration / observation |
 |---|---|
-| Protocol 1.0 wire contract | `FROZEN` |
-| 40-pin pin 36 -> GPIO2_17 / CAN_TX3 -> TJA1042 TXD | `FROZEN` |
-| 40-pin pin 11 -> GPIO2_18 / CAN_RX3 <- TJA1042 RXD | `FROZEN` |
-| CAN3 pinctrl | TX `<0x40 0x1>` / GPIO2_17 and RX `<0x44 0x1>` / GPIO2_18 (`VERIFIED`) |
-| CAN3 controller | `mttcan@3`, `mttcan-id=3`, `822d0000.mttcan` (`VERIFIED`) |
-| CAN3 SocketCAN interface | `can3` (`FROZEN` production default) |
-| External CAN transceiver family | TJA1042T(K)/3 (`VERIFIED` user-confirmed family) |
-| CANH/CANL/common-ground/two-end 120-ohm topology | `VERIFIED` by physical confirmation |
-| 500 kbit/s nominal + 2 Mbit/s data + CAN FD+BRS | `VERIFIED`; Linux sample points fixed at 80% / 82.5% |
-| Bidirectional Protocol 1.0 traffic | `PASS`; real `0x080`, `0x082`, and `0x180..0x183`, robot DISARMED |
-| Straight obstacle-stop physical demo | `TBD` |
+| Wire contract | Protocol 1.0 |
+| Orange Pi TX | 40-pin pin 36 -> GPIO2_17 / CAN_TX3 -> TJA1042T(K)/3 TXD |
+| Orange Pi RX | 40-pin pin 11 -> GPIO2_18 / CAN_RX3 <- TJA1042T(K)/3 RXD |
+| CAN3 pinctrl | TX `<0x40 0x1>` / GPIO2_17; RX `<0x44 0x1>` / GPIO2_18 |
+| CAN3 controller | `mttcan@3`, `mttcan-id=3`, `822d0000.mttcan` |
+| SocketCAN interface | `can3` |
+| CAN transceiver | TJA1042T(K)/3 |
+| Bus topology | CANH/CANL, common ground, one 120-ohm terminator at each end |
+| CAN FD | 500 kbit/s nominal, 2 Mbit/s data, BRS; Linux sample points 80% / 82.5% |
+| Observed traffic | Bidirectional `0x080`, `0x082`, and `0x180..0x183`; robot DISARMED |
 
 The production wiring is:
 
 ```text
-40-pin pin 36 -> GPIO2_17 / CAN_TX3 -> TJA1042 TXD
-40-pin pin 11 -> GPIO2_18 / CAN_RX3 <- TJA1042 RXD
+40-pin pin 36 -> GPIO2_17 / CAN_TX3 -> TJA1042T(K)/3 TXD
+40-pin pin 11 -> GPIO2_18 / CAN_RX3 <- TJA1042T(K)/3 RXD
 -> mttcan@3 / mttcan-id 3 / controller base 0x822d0000
 -> SocketCAN can3
 ```
 
-The installed board-specific Device Tree preserves vendor board ID `0x280B` and exposes the frozen
-CAN3 path. The old `822c0000.mttcan` / `can2` path is historical and deprecated because it cannot
-drive the connected CAN3 pins; production has no CAN2 fallback.
+The installed board-specific Device Tree preserves vendor board ID `0x280B` and exposes CAN3. The
+old `822c0000.mttcan` / `can2` path is historical and cannot drive the connected CAN3 pins; there is
+no CAN2 fallback.
 
-Linux driver-default sample points previously produced sustained CAN errors against the accepted
-STM32 timing. The verified production profile is therefore explicit: 500 kbit/s at 80.0% and
+Linux driver-default sample points previously produced sustained CAN errors against the STM32
+timing. Startup therefore sets 500 kbit/s at 80.0% and
 2 Mbit/s at 82.5%. With this profile the real bus is Error Active with TX error 0, RX error 0,
 bus-errors 0, and bus-off 0.
 
@@ -67,7 +64,7 @@ bus-errors 0, and bus-off 0.
 | `straight_obstacle_stop_demo.launch.py` | Bridge plus commissioning demo |
 | `m5_commissioning.yaml` | Conservative, overrideable commissioning defaults |
 | `configure_can3.sh` | Idempotent CAN3/controller/timing verification and setup |
-| `robot-can3.service` | Boot-time CAN3 setup gate |
+| `robot-can3.service` | Boot-time CAN3 availability gate |
 | `robot-stm32-bridge.service` | Starts the DISARMED bridge only after CAN3 is ready |
 
 ## ROS interfaces
@@ -110,10 +107,10 @@ DISARMED. `/cmd_vel` traffic alone never arms the robot.
 
 | Parameter | Default | Meaning |
 |---|---:|---|
-| `can_interface` | `can3` | Frozen production SocketCAN interface; no CAN2 fallback |
+| `can_interface` | `can3` | SocketCAN interface; no CAN2 fallback |
 | `cmd_vel_topic` | `/cmd_vel` | Production Nav2-compatible command topic |
 | `imu_frame_id` | `imu_link` | Frame label only; no transform is created |
-| `command_timeout_ms` | `100` | Host timeout, deliberately inside STM32's frozen 250 ms deadline |
+| `command_timeout_ms` | `100` | Host timeout, deliberately inside STM32's 250 ms deadline |
 | `status_timeout_ms` | `350` | Maximum accepted SYSTEM_STATUS age |
 | `reconnect_period_ms` | `1000` | Socket reopen interval after transport failure |
 
@@ -124,15 +121,15 @@ DISARMED. `/cmd_vel` traffic alone never arms the robot.
 | `forward_speed_mps` | `0.30` | Highest currently justified commissioning speed; cannot exceed 0.30 m/s |
 | `stop_distance_m` | `0.60` | Conservative commissioning obstacle threshold at 0.30 m/s |
 | `front_sector_deg` | `30.0` | Full angular width of evaluated sector |
-| `front_center_deg` | `180.0` | Robot-forward in the frozen yaw-pi `laser_frame` |
-| `scan_timeout_ms` | `400` | Stale-scan fail-safe deadline |
+| `front_center_deg` | `180.0` | Robot-forward in the yaw-pi `laser_frame` |
+| `scan_timeout_ms` | `400` | Maximum steady-clock receipt age and ROS source-timestamp age |
 | `bridge_timeout_ms` | `300` | Stale bridge-status fail-safe deadline |
 
-These values are commissioning defaults, not frozen safety specifications. Override them through a
+These values are commissioning defaults, not robot safety specifications. Override them through a
 launch parameter file or `--ros-args -p name:=value` only after checking the real test setup.
 The firmware accepts at most 0.30 m/s body-linear speed in this commissioning build. The 0.60 m
-threshold is deliberately conservative but is not a frozen robot safety distance: physical stopping
-distance at 0.30 m/s must be measured before reducing it or claiming a final safety specification.
+threshold is deliberately conservative but is not a measured robot safety distance: physical
+stopping distance at 0.30 m/s must be measured before reducing it or defining a safety limit.
 
 ## Protocol behavior
 
@@ -144,7 +141,7 @@ The bridge uses Standard-ID CAN FD frames with BRS and explicit little-endian se
 | STM32 to host | `0x180` status, `0x181` wheel, `0x182` IMU, `0x183` battery |
 
 Every process/control session uses a new nonzero 32-bit session identifier and independent 16-bit
-sequence streams. Arming requires the frozen transaction:
+sequence streams. Arming requires this transaction:
 
 ```text
 HOST_HEARTBEAT(BRIDGE_READY)
@@ -160,7 +157,30 @@ other than exactly 1.0 is rejected and blocks motion. Sequence gaps, duplicates,
 counted. Recognized CAN errors, bus-off, socket failure, stale status, critical STM32 faults, and
 invalid commands converge to the safe path.
 
-## Demo state model
+## Motion safety and obstacle-stop state
+
+The continuing motion-safety contract is:
+
+```text
+explicit START
+-> Motion Authority granted
+-> fresh motion commands
+-> motion allowed
+```
+
+Motion is disabled by default, and Motion Authority is independent from velocity commands. Stopping
+uses layered withdrawal of motion authority:
+
+```text
+obstacle / stale command / communication loss / fault / explicit STOP
+-> zero motion command where available
+-> Motion Authority withdrawn
+-> STM32 motor-safe stop
+```
+
+Loss or withdrawal of authority stops motion. Command freshness, heartbeat/watchdog, and fault
+handling remain independent lower-level protections. The obstacle-stop node implements the
+following latched operator-visible states:
 
 ```text
 STOPPED --explicit START + authority confirmed--> RUNNING
@@ -174,6 +194,18 @@ the configured distance causes zero Twist publication and bridge disarm in the s
 cycle. STOPPED remains latched after obstacle removal. Only another explicit `~/start` may begin a
 new run; stale commands, old authority, and obstacle removal cannot restart motion.
 
+The scan motion gate requires both a usable scan received within `scan_timeout_ms` on the steady
+clock and a nonzero source `header.stamp` no older than the same timeout on the node's active ROS
+clock. A fixed 50 ms future tolerance permits minor scheduling/clock skew; timestamps farther in the
+future, zero timestamps, and timestamps that cannot be meaningfully compared with the active ROS
+clock are invalid. Receipt timeout, stale source time, and invalid source time all use the existing
+zero Twist, authority-withdrawal, and latched STOPPED path. Valid scans returning never auto-resume.
+
+On 2026-09-02, with the real RPLIDAR A1 at 10 Hz,
+`ros2 topic delay /scan` measured approximately 0.133-0.134 s average source age over a 10-sample
+window (approximately 0.123-0.136 s observed range). The production predicate reported
+`scan_fresh: true` while the node remained STOPPED and unarmed; no START request was issued.
+
 `DemoStatus` records obstacle detection, zero-Twist publication, disarm request, bridge authority
 withdrawal transmission, and safe STM32 status confirmation timestamps. These measure software and
 command-path timing only; they are not physical stopping-distance evidence.
@@ -181,7 +213,7 @@ command-path timing only; they are not physical stopping-distance evidence.
 ## Production startup
 
 The version-controlled `robot-can3.service` runs the idempotent `configure_can3.sh` before the
-bridge service. If `can3` already has the verified controller mapping, MTU, timing, FD state, and
+bridge service. If `can3` already has the configured controller mapping, MTU, timing, FD state, and
 Error Active state, the script makes no link change. Otherwise it performs:
 
 ```bash
@@ -215,7 +247,7 @@ The bridge starts DISARMED, sends no `0x081` unless motion was explicitly reques
 automatic socket reconnect after a runtime transport write/receive failure to prevent a persistent
 ENOBUFS loop. Repair `can3`, then restart the bridge service to establish a new safe session.
 
-## Build and non-actuating acceptance
+## Build and non-actuating checks
 
 ```bash
 conda deactivate 2>/dev/null || true
@@ -228,14 +260,14 @@ colcon test-result --verbose
 ros2 launch robot_stm32_bridge bridge.launch.py
 ```
 
-Bridge-only launch remains DISARMED. Physical-link acceptance is complete: the production bridge
-exchanged the required host and STM32 frames with Protocol 1.0 valid and no abnormal CAN errors.
+Bridge-only launch remains DISARMED. The bridge exchanged the required host and STM32 frames with
+Protocol 1.0 valid and no abnormal CAN errors.
 
-The final M5 motion gate has passed on real hardware. Future runs must still confirm
-BODY_COMMAND_READY and deliberately prepare the commissioning area, obstacle, and emergency
+Future drivetrain commissioning runs must confirm BODY_COMMAND_READY and deliberately prepare the
+commissioning area, obstacle, and emergency
 intervention before calling the demo `~/start` service.
 
-## Final M5 physical demo
+## Obstacle-stop physical demonstration
 
 The systemd service already owns the single production bridge. The demo launch therefore starts
 only `straight_obstacle_stop_demo`:
@@ -255,9 +287,9 @@ ros2 service call /straight_obstacle_stop_demo/stop std_srvs/srv/Trigger '{}'
 ros2 topic echo /straight_obstacle_stop_demo/status --once
 ```
 
-**Status: PASS.** The accepted sequence was explicit START, continuous 0.30 m/s closed-loop straight
+The demonstrated sequence was explicit START, continuous 0.30 m/s closed-loop straight
 motion, a real RPLIDAR A1 `/scan` obstacle inside the 30° frontal sector at 0.60 m, zero velocity and
-Motion Authority withdrawal, STM32 safe stop, obstacle removal with STOPPED still latched, then a
+Motion Authority withdrawal, STM32 motor-safe stop, obstacle removal with STOPPED still latched, then a
 new explicit START. The STOP service is the operator's immediate ROS-side withdrawal command; STM32
 safety remains authoritative.
 
@@ -269,6 +301,6 @@ Observed from obstacle detection in the successful demo:
 | Motion Authority withdrawal | approximately `1.276 ms` |
 | STM32 stop confirmation | approximately `30.8 ms` |
 
-These are observed measurements from the successful acceptance run, not guaranteed worst-case
-safety limits. The accepted 0.30 m/s value is the current commissioning limit, not the robot's
+These are observed measurements from the demonstration, not guaranteed worst-case safety limits.
+The 0.30 m/s value is the current commissioning limit, not the robot's
 physical maximum.

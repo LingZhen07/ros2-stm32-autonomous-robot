@@ -1,7 +1,5 @@
 # RobotProject Communication Protocol v1.0
 
-Status: **FROZEN**
-
 Wire name: `RobotProject Protocol v1`
 Authority: this file and `protocol_v1.yaml` are the shared Linux <-> STM32 contract.
 
@@ -27,7 +25,7 @@ No synchronized Linux/STM32 wall clock is required.
 
 ## 2. Transport
 
-| Property | Frozen value |
+| Property | Value |
 |---|---:|
 | CAN identifier format | 11-bit Standard ID |
 | Frame format | CAN FD, data frame, Bit Rate Switching enabled |
@@ -57,10 +55,9 @@ nominal = 170 MHz / (17 * (1 + 15 + 4)) = 500 kbit/s
 data    = 170 MHz / (5  * (1 + 13 + 3)) = 2 Mbit/s
 ```
 
-The 2 Mbit/s data rate is below the 5 Mbit/s CAN FD capability documented for the
-TJA1042/TJA1043 families. The exact installed module variant, logic-level wiring, mode pins,
-termination, and physical-link quality remain hardware acceptance items; this statement does
-not identify the actual module subvariant.
+The robot uses a `TJA1042T(K)/3` transceiver. Its 5 Mbit/s CAN FD capability covers the configured
+2 Mbit/s data rate. Logic-level wiring, mode pins, termination, and physical-link quality are
+separate hardware integration properties.
 
 Every Protocol v1 frame is FD+BRS. A Classic CAN frame, FD frame without BRS, Extended-ID
 frame, or remote frame using a Protocol v1 ID is invalid.
@@ -202,7 +199,7 @@ motion. Communication returning never restores the prior velocity or `ACTIVE` st
 
 Malformed CAN traffic cannot arm the robot. A malformed frame only forces a system fault when CAN
 already owns or claims motion; otherwise it remains rejected and observable without disabling the
-independent permanent UART commissioning path.
+independent UART commissioning path.
 
 ## 6. Host-to-STM32 frames
 
@@ -352,11 +349,11 @@ All logical wheel fields use robot convention: forward is positive, reverse is n
 Wheel flags: bit 0 logical mapping valid; 1 Encoder 1 valid; 2 Encoder 2 valid; 3 left
 controller configured; 4 right controller configured; 5 both controllers enabled; 6 left
 saturated; 7 right saturated; 8 motor layer authorized; 9 STBY enabled; 10 left target valid;
-11 right target valid; 12 body-command drivetrain ready; 13 verified left/right encoder sign
+11 right target valid; 12 body-command drivetrain ready; 13 configured left/right encoder sign
 calibration present; 14..15 reserved.
 
-Hardware acceptance established `left wheel forward -> raw CPS < 0` and `right wheel forward ->
-raw CPS > 0`. Firmware freezes left sign `-1` and right sign `+1` at the drivetrain abstraction.
+Physical testing established `left wheel forward -> raw CPS < 0` and `right wheel forward ->
+raw CPS > 0`. The drivetrain abstraction uses left sign `-1` and right sign `+1`.
 Encoder 1/2 wheel ownership remains separately configurable. Until that ownership is set,
 logical position/rate fields are invalid while the raw Encoder 1/2 fields remain available.
 
@@ -444,12 +441,12 @@ incompatible safety model.
 - After recovery, Linux sends a new valid heartbeat, explicit DISARMED, then ARMED, then a fresh
   body command. The previous target is never reused.
 
-The physical CAN link is not accepted until real bidirectional frames, error state, termination,
-and bitrate behavior are observed on the integrated Orange Pi/STM32 hardware.
+Physical CAN integration requires observed bidirectional frames, error state, termination, and
+bitrate behavior on the Orange Pi/STM32 hardware.
 
 ## 10. Baseline bandwidth
 
-At the frozen rates there are 232 application frames/s: 70 host-to-STM32 and 162
+At the configured rates there are 232 application frames/s: 70 host-to-STM32 and 162
 STM32-to-host. Payload alone is 75,776 bit/s. A conservative engineering estimate including
 arbitration/control/CRC/inter-frame overhead and 25% bit-stuffing allowance is approximately 8%
 and bounded below 10% bus time at 500 kbit/s arbitration and 2 Mbit/s data phase. This is a design
@@ -464,14 +461,14 @@ The ROS Codex can implement the bridge using only this section plus the frame de
 
 - Inspect the actual Orange Pi CAN controller and transceiver before configuration.
 - Use SocketCAN CAN FD mode with 11-bit IDs and payload lengths up to 64 bytes.
-- The accepted RobotProject deployment is Orange Pi CAN3 / SocketCAN `can3`; there is no CAN2
+- The RobotProject deployment uses Orange Pi CAN3 / SocketCAN `can3`; there is no CAN2
   production fallback.
 - Configure nominal 500000 bit/s and data 2000000 bit/s with FD enabled.
-- On the accepted Linux `drv_mttcan` controller, explicitly set nominal sample point 0.800 and data
-  sample point 0.825. The STM32's frozen data sample point remains 0.823529; this is an endpoint
+- On the Linux `drv_mttcan` controller, explicitly set nominal sample point 0.800 and data
+  sample point 0.825. The STM32 data sample point is 0.823529; this is an endpoint
   timing configuration detail and does not change Protocol 1.0 wire semantics.
 - Enable bus-error reporting where supported and observe error counters/state.
-- Do not claim physical PASS until real bidirectional FD+BRS frames are observed.
+- Confirm physical integration by observing real bidirectional FD+BRS frames.
 
 ### Frames sent by Linux
 
@@ -530,5 +527,4 @@ time to ROS time without feeding that correlation back into command-safety timeo
 ## 12. Primary references
 
 - STMicroelectronics, [RM0440 STM32G4 reference manual](https://www.st.com/resource/en/reference_manual/dm00355726.pdf), FDCAN bit timing and controller behavior.
-- NXP, [TJA1042 high-speed CAN transceiver](https://www.nxp.com/products/TJA1042), CAN FD fast-phase capability.
-- NXP, [TJA1043 data sheet](https://www.nxp.com/docs/en/data-sheet/TJA1043.pdf), CAN FD timing capability and physical-layer behavior.
+- NXP, [TJA1042T(K)/3 high-speed CAN transceiver](https://www.nxp.com/products/TJA1042), CAN FD fast-phase capability.

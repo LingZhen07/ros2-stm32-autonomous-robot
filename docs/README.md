@@ -10,24 +10,24 @@
 |---|---|---|
 | [Hardware Baseline and STM32 Pin Map](hardware.md) | English | Hardware models, pin map, peripheral ownership, geometry |
 | [硬件基线与 STM32 Pin Map](hardware.zh-CN.md) | 中文 | 硬件型号、Pin Map、外设归属、几何信息 |
-| [Orange Pi / STM32 ROS Bridge](ros_bridge.md) | English | SocketCAN, Protocol 1.0 bridge, ROS interfaces, and M5 demo |
-| [Orange Pi / STM32 ROS 桥接](ros_bridge.zh-CN.md) | 中文 | SocketCAN、Protocol 1.0 桥接、ROS 接口与 M5 演示 |
-| [STM32 M1-M5 Production Firmware](firmware.md) | English | Accepted real-time foundation, Protocol v1/M5 firmware integration, safety and acceptance boundary |
-| [STM32 M1-M5 生产固件](firmware.zh-CN.md) | 中文 | 已验收实时基础、Protocol v1/M5 固件集成、安全与验收边界 |
-| [STM32 USART2 Production CLI](uart_cli.md) | English | Complete permanent command, output-rate, commissioning, and safety reference |
-| [STM32 USART2 生产版 CLI](uart_cli.zh-CN.md) | 中文 | 永久命令、输出频率、标定与安全完整手册 |
+| [Orange Pi / STM32 ROS Bridge](ros_bridge.md) | English | SocketCAN, Protocol 1.0 bridge, ROS interfaces, and obstacle-stop demo |
+| [Orange Pi / STM32 ROS 桥接](ros_bridge.zh-CN.md) | 中文 | SocketCAN、Protocol 1.0 桥接、ROS 接口与遇障停车演示 |
+| [STM32 Real-Time Control Firmware](firmware.md) | English | MCU peripherals, real-time control, CAN FD, safety, and drivetrain commissioning |
+| [STM32 实时控制固件](firmware.zh-CN.md) | 中文 | MCU 外设、实时控制、CAN FD、安全与底盘调试 |
+| [STM32 USART2 Engineering Console](uart_cli.md) | English | Commands, output rates, commissioning, and safety reference |
+| [STM32 USART2 工程控制台](uart_cli.zh-CN.md) | 中文 | 命令、输出频率、标定与安全手册 |
 | `README.md` | English | Documentation index and maintenance rules |
 | `README.zh-CN.md` | 中文 | 文档索引与维护规则 |
 
-## Status Labels
+## Unresolved-item labels
 
-| Label | Use |
+| Label | Use only when needed |
 |---|---|
-| `FROZEN` | Accepted configuration retained across later stages |
-| `VERIFIED` | Supported by real system evidence |
-| `IN PROGRESS` | Active integration work |
-| `PROPOSED` | Candidate awaiting validation |
+| `IN PROGRESS` | Active work whose outcome is not established |
+| `PROPOSED` | Candidate awaiting a decision or measurement |
 | `TBD` | Intentionally unresolved |
+
+State established configuration and measured facts directly instead of attaching lifecycle labels.
 
 ## Knowledge Base Update Triggers
 
@@ -39,7 +39,7 @@ Update the relevant English and Chinese documents when any of these become known
 | Encoder | CPR/PPR definition, polarity, wheel ownership |
 | Motor | A/B ownership, direction, safe-stop behavior |
 | IMU | Configuration, calibration, interrupt behavior |
-| Battery | ADC calibration and validated voltage conversion |
+| Battery | ADC calibration and measured voltage conversion |
 | CAN / CAN FD | Bit timing, IDs, payloads, timeout semantics |
 | Safety | State machine, watchdog, fault recovery |
 | Odometry | Wheel model, TF ownership, measured accuracy |
@@ -55,6 +55,6 @@ Use:
 - trees for repository or hierarchy views;
 - explicit units;
 - exact pin, peripheral, topic, frame, register, and protocol names;
-- real measured values with acceptance context.
+- real measured values with measurement context.
 
-Keep assumptions marked as `PROPOSED` or `TBD` until real evidence supports promotion to `VERIFIED` or `FROZEN`.
+Keep unresolved assumptions marked as `PROPOSED` or `TBD`; state established facts directly.

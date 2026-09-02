@@ -43,8 +43,20 @@ ament_target_dependencies(robot_stm32_bridge_node
 )
 target_link_libraries(robot_stm32_bridge_node protocol_v1)
 
-add_executable(straight_obstacle_stop_demo src/straight_obstacle_stop_demo.cpp)
-ament_target_dependencies(straight_obstacle_stop_demo
+add_library(scan_validity STATIC src/scan_validity.cpp)
+target_include_directories(scan_validity PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(scan_validity builtin_interfaces rclcpp)
+
+add_library(straight_obstacle_stop_demo_node STATIC
+  src/straight_obstacle_stop_demo.cpp)
+target_include_directories(straight_obstacle_stop_demo_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(straight_obstacle_stop_demo_node
   geometry_msgs
   rclcpp
   sensor_msgs
@@ -52,15 +64,26 @@ ament_target_dependencies(straight_obstacle_stop_demo
   std_srvs
 )
 
+add_executable(straight_obstacle_stop_demo
+  src/straight_obstacle_stop_demo_main.cpp)
+ament_target_dependencies(straight_obstacle_stop_demo rclcpp)
+
 rosidl_get_typesupport_target(cpp_typesupport_target
   ${PROJECT_NAME} rosidl_typesupport_cpp)
 target_link_libraries(robot_stm32_bridge_node "${cpp_typesupport_target}")
-target_link_libraries(straight_obstacle_stop_demo "${cpp_typesupport_target}")
+target_link_libraries(straight_obstacle_stop_demo_node
+  scan_validity
+  "${cpp_typesupport_target}"
+)
+target_link_libraries(straight_obstacle_stop_demo
+  straight_obstacle_stop_demo_node)
 
 install(TARGETS
   protocol_v1
   robot_stm32_bridge_node
+  scan_validity
   straight_obstacle_stop_demo
+  straight_obstacle_stop_demo_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -80,6 +103,28 @@ if(BUILD_TESTING)
   ament_add_gtest(protocol_v1_test test/protocol_v1_test.cpp)
   if(TARGET protocol_v1_test)
     target_link_libraries(protocol_v1_test protocol_v1)
+  endif()
+
+  ament_add_gtest(scan_validity_test test/scan_validity_test.cpp)
+  if(TARGET scan_validity_test)
+    ament_target_dependencies(scan_validity_test builtin_interfaces rclcpp)
+    target_link_libraries(scan_validity_test scan_validity)
+  endif()
+
+  ament_add_gtest(obstacle_stop_scan_freshness_test
+    test/obstacle_stop_scan_freshness_test.cpp)
+  if(TARGET obstacle_stop_scan_freshness_test)
+    ament_target_dependencies(obstacle_stop_scan_freshness_test
+      geometry_msgs
+      rclcpp
+      sensor_msgs
+      std_msgs
+      std_srvs
+    )
+    target_link_libraries(obstacle_stop_scan_freshness_test
+      straight_obstacle_stop_demo_node
+      "${cpp_typesupport_target}"
+    )
   endif()
 endif()
 

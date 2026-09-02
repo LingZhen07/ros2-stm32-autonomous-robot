@@ -1,23 +1,22 @@
-# STM32 Production Firmware M1-M5
+# STM32 Real-Time Control Firmware
 
 [中文](firmware.zh-CN.md)
 
-## Status
+## Implemented system
 
-| Milestone | Status | Evidence boundary |
-|---|---|---|
-| M1 MCU foundation | `VERIFIED` | Real STM32 execution, SWD, USART2, clock/startup behavior |
-| M2 peripheral foundation | `VERIFIED` | Real ADC, encoder, ICM-42688-P, TIM1 PWM behavior |
-| M3 real-time control foundation | `VERIFIED` | FreeRTOS, safety, watchdog architecture, TB6612 path, real motor rotation |
-| M4 Protocol v1 + firmware FDCAN | `FROZEN / PHYSICALLY INTEGRATED` | Shared contract, firmware integration, and real Orange Pi CAN3 link accepted |
-| M5 real-hardware integration | `VERIFIED / PASS` | BODY_COMMAND_READY, Motion Authority, 0.30 m/s closed-loop straight motion, LiDAR stop, authority withdrawal, and STM32 safe stop accepted |
+| Area | Current implementation |
+|---|---|
+| MCU foundation | STM32 execution, SWD, USART2, clock and safe startup |
+| Peripherals | ADC, wheel encoders, ICM-42688-P and TIM1 PWM |
+| Real-time control | FreeRTOS, safety supervisor, watchdog, TB6612 output and wheel control |
+| CAN FD integration | Protocol 1.0 over FDCAN and Orange Pi SocketCAN `can3` |
+| Drivetrain commissioning | BODY_COMMAND_READY, Motion Authority, 0.30 m/s closed-loop straight driving and obstacle stop |
 
-M1-M5 real-hardware acceptance is complete. Protocol 1.0 remains frozen and production transport
-remains Orange Pi CAN3 / SocketCAN `can3`.
+Transport is Orange Pi CAN3 / SocketCAN `can3`; the shared wire protocol is Protocol 1.0.
 
 ## MCU baseline
 
-| Item | Frozen configuration |
+| Item | Configuration |
 |---|---|
 | Target | STM32G474RET6, LQFP64; DeveBox STM32G474R Ver:20 |
 | Clock | 8 MHz HSE, PLL M=2/N=85/R=2, 170 MHz SYSCLK/HCLK/PCLK1/PCLK2 |
@@ -26,15 +25,15 @@ remains Orange Pi CAN3 / SocketCAN `can3`.
 | Encoders | TIM2/TIM3 hardware encoder mode, both 16-bit range 0..65535 |
 | IMU | SPI1 mode 0, ICM-42688-P 100 Hz baseline, EXTI task signaling |
 | Battery | ADC1 IN6, calibrated ADC path, software-triggered long sample |
-| Diagnostics | USART2 115200 8N1 permanent block-serialized CLI; quiet by default |
+| Diagnostics | USART2 115200 8N1 block-serialized CLI; quiet by default |
 | Watchdog | IWDG nominal 4 s; Supervisor-only refresh; debug halt freeze |
 | FDCAN | 500 kbit/s nominal, 2 Mbit/s data, FD+BRS, Standard IDs |
 
-The frozen pin map and safe output levels remain in [hardware.md](hardware.md).
+The pin map and safe output levels are in [hardware.md](hardware.md).
 
-## Verified hardware acceptance
+## Hardware observations
 
-The first integrated board session established real evidence for:
+Integrated board sessions established:
 
 - STM32 execution and USART2 bytes;
 - physical encoder acquisition;
@@ -43,7 +42,7 @@ The first integrated board session established real evidence for:
 - TIM1 PWM generation;
 - TB6612 motor-control electrical path and real motor rotation.
 
-The verified encoder sign observation is:
+The encoder sign observation is:
 
 ```text
 left wheel forward  -> raw CPS < 0
@@ -51,10 +50,10 @@ right wheel forward -> raw CPS > 0
 logical forward     -> normalized rate > 0 on both sides
 ```
 
-The correction is owned by `app_drivetrain`, not the timer encoder driver. Commissioning has now
-verified Encoder 1 as the right wheel with forward raw sign `+1`, and Encoder 2 as the left wheel
+The correction is owned by `app_drivetrain`, not the timer encoder driver. Commissioning identified
+Encoder 1 as the right wheel with forward raw sign `+1`, and Encoder 2 as the left wheel
 with forward raw sign `-1`. Raw Encoder 1/2 diagnostics remain unchanged; logical wheel state and
-Protocol `0x181` telemetry use right=`+raw`, left=`-raw`. Real commissioning also verified Motor A
+Protocol `0x181` telemetry use right=`+raw`, left=`-raw`. Motor commissioning identified Motor A
 as the right wheel and Motor B as the left wheel. Both motor channels require logical-forward sign
 `-1`; the normalization remains above the motor GPIO/PWM driver.
 
@@ -69,7 +68,7 @@ CubeMX-owned initialization stays under `firmware/Core`; project-owned code stay
 | `app_state` / `app_safety` | BOOT/INIT/SAFE/READY/ACTIVE/FAULT and centralized safe convergence |
 | `app_supervisor` | Critical task heartbeat checks and sole watchdog feed ownership |
 | `app_command` | Shared validated command, source, timestamp and local freshness |
-| `app_drivetrain` | Wheel/motor mapping, verified logical signs, calibration guards, differential drive |
+| `app_drivetrain` | Wheel/motor mapping, logical signs, calibration guards, differential drive |
 | `app_control` | Independent wheel PI/PID-compatible control, clamp and anti-windup |
 | `app_motor` | TB6612 direction/PWM/STBY ownership and emergency-safe output |
 | `app_encoder` | Wrap-safe 16-bit delta, cumulative counts and raw/filtered CPS |
@@ -113,7 +112,30 @@ Power-up and every fault path enforce STBY LOW, direction LOW, and zero PWM. CAN
 the existing supervisor, internal command model, drivetrain guards, wheel controller, or motor
 layer.
 
-M5 validates each CAN `BODY_VELOCITY` against configured controllers, drivetrain readiness, and
+The continuing motion-safety contract is:
+
+```text
+explicit START
+-> Motion Authority granted
+-> fresh motion commands
+-> motion allowed
+```
+
+Motion is disabled by default, and Motion Authority is independent from velocity commands. Stopping
+uses layered withdrawal of motion authority:
+
+```text
+obstacle / stale command / communication loss / fault / explicit STOP
+-> zero motion command where available
+-> Motion Authority withdrawn
+-> STM32 motor-safe stop
+```
+
+Loss or withdrawal of authority stops motion. Command freshness, heartbeat/watchdog, and fault
+handling remain independent lower-level protections. Obstacle stop enters latched STOPPED; clearing
+the obstacle does not restart motion, and a new explicit START is required.
+
+Each CAN `BODY_VELOCITY` is checked against configured controllers, drivetrain readiness, and
 local operating limits before accepting it into the shared command model. An incomplete or
 out-of-range active command is rejected and converges through the existing safety supervisor; it
 is never clamped into a different motion.
@@ -174,16 +196,16 @@ The complete contract, field offsets, golden frames, ROS conversion, and fault m
 
 Centralized firmware defaults now contain the user-measured commissioning geometry:
 
-| Value | Commissioning setting | Status |
+| Value | Commissioning setting | Basis |
 |---|---:|---|
 | Wheel radius | 0.023 m | `MEASURED / COMMISSIONING` |
 | Wheel track | 0.125 m | `MEASURED / COMMISSIONING` |
 | Half track used by differential drive | 0.0625 m | `DERIVED` |
 | Geometric circumference | 0.1445132621 m | `DERIVED` |
-| Encoder 1 ownership / forward sign | right wheel / `+1` | `VERIFIED` |
-| Encoder 2 ownership / forward sign | left wheel / `-1` | `VERIFIED` |
-| Motor A ownership / logical-forward sign | right wheel / `-1` | `VERIFIED` |
-| Motor B ownership / logical-forward sign | left wheel / `-1` | `VERIFIED` |
+| Encoder 1 ownership / forward sign | right wheel / `+1` | physical direction test |
+| Encoder 2 ownership / forward sign | left wheel / `-1` | physical direction test |
+| Motor A ownership / logical-forward sign | right wheel / `-1` | physical direction test |
+| Motor B ownership / logical-forward sign | left wheel / `-1` | physical direction test |
 | Right counts per wheel revolution | 1059.5 | `MEASURED / COMMISSIONING` |
 | Left counts per wheel revolution | 1060.8 | `MEASURED / COMMISSIONING` |
 | Right meters / radians per count | 0.0001363976 m / 0.005930331 rad | `DERIVED` |
@@ -204,8 +226,8 @@ v_right = v + omega * 0.0625
 The wheel scale came from ten complete forward revolutions on each physical wheel: Encoder 1
 accumulated +10,595 counts and Encoder 2 accumulated -10,608 counts. The approximately 0.123%
 side-to-side difference is deliberately preserved; firmware does not average the two calibration
-values. Radius, track, and encoder scales are still commissioning values and must be validated by
-real straight-line travel and rotational motion.
+values. Radius, track, and encoder scales are commissioning values; effective odometry calibration
+still requires measured straight-line travel and rotational motion.
 
 The initial independent left/right PI configurations are `Kp=0.00020`, `Ki=0.00060`, `Kd=0`, an
 integrator limit of 700 count-seconds, and output limit 0.60. These are deliberately equal initial
@@ -214,12 +236,12 @@ output, has conditional-integration anti-windup, and applies the configured targ
 an active command is valid. Any safety convergence resets the controllers and directly forces the
 motor-safe state; withdrawal is not delayed by the ramp.
 
-At initialization, BODY_COMMAND_READY is true only when the verified mapping/scales/geometry,
+At initialization, BODY_COMMAND_READY is true only when the configured mapping/scales/geometry,
 finite operating envelope, and both valid controller configurations are present. Protocol `0x180`
 bit 15, `0x181` bit 12, UART `status`, and the Safety guard use this complete readiness condition.
 An out-of-range BODY_VELOCITY is rejected rather than clamped.
 
-The 0.30 m/s ceiling is a firmware commissioning limit, not a verified motor or robot maximum.
+The 0.30 m/s ceiling is a firmware commissioning limit, not a measured motor or robot maximum.
 The exact installed-motor loaded and stall current, attainable loaded wheel speed, and TB6612
 carrier/module thermal margin have not been measured; without those quantities a higher sustained
 limit cannot be justified. The 0.60 output clamp limits duty request but is not a current limit
@@ -229,7 +251,7 @@ scales. No Nav2 footprint geometry is reused as drivetrain geometry.
 
 ## Telemetry and ROS boundary
 
-Firmware transmits normalized cumulative wheel counts/rates, the frozen raw Encoder 1/2 diagnostic
+Firmware transmits normalized cumulative wheel counts/rates, the unchanged raw Encoder 1/2 diagnostic
 fields, controller target/output, IMU SI measurements, battery estimate/validity, safety state,
 fault word, supervisor/watchdog health, STM32 monotonic time, and sequences. Raw values also remain
 available through local UART diagnostics; they coexist with, and are not substituted for, the
@@ -240,28 +262,28 @@ The Orange Pi owns `nav_msgs/msg/Odometry` and the later deliberate single autho
 `odom -> base_link`. Metric odometry must wait for measured drivetrain scale and real motion
 consistency evidence.
 
-## Build and acceptance boundary
+## Build and hardware evidence
 
 On 2026-08-29, clean Debug and Release cross-builds with Arm GNU Toolchain completed with zero
 compiler/linker warnings and produced ELF, HEX, and BIN images:
 
-| Build | FLASH | RAM | Result |
+| Build | FLASH | RAM | Warnings |
 |---|---:|---:|---|
-| Debug | 105,544 B / 512 KiB (20.13%) | 42,848 B / 128 KiB (32.69%) | PASS |
-| Release | 67,936 B / 512 KiB (12.96%) | 42,848 B / 128 KiB (32.69%) | PASS |
+| Debug | 105,544 B / 512 KiB (20.13%) | 42,848 B / 128 KiB (32.69%) | 0 |
+| Release | 67,936 B / 512 KiB (12.96%) | 42,848 B / 128 KiB (32.69%) | 0 |
 
-The physical cross-domain link is accepted through Orange Pi CAN3 / SocketCAN `can3`: real
+The physical cross-domain link uses Orange Pi CAN3 / SocketCAN `can3`: real
 FD+BRS frames `0x080`, `0x082`, and `0x180..0x183` were observed at 500 kbit/s nominal and 2 Mbit/s
 data. Explicit Linux sample points 80% / 82.5% produced Error Active with zero TX/RX errors and
 zero bus-off events. Protocol 1.0, the firmware timing, and the robot's default DISARMED behavior
 are unchanged.
 
-The final M5 real-hardware demo passed with firmware `0.5.4`: BODY_COMMAND_READY and Motion Authority
-were confirmed, closed-loop straight motion ran at the current 0.30 m/s commissioning limit, and a
+The obstacle-stop demonstration used firmware `0.5.4`: BODY_COMMAND_READY and Motion Authority
+were present, closed-loop straight motion ran at the current 0.30 m/s commissioning limit, and a
 real RPLIDAR A1 `/scan` obstacle inside the 30° frontal sector at 0.60 m caused zero velocity,
 authority withdrawal, and STM32 safe stop. STOPPED remained latched after obstacle removal and a new
-explicit user START was required before motion could resume. The accepted commissioning speed is
-not a claim of physical maximum speed.
+explicit user START was required before motion could resume. The commissioning limit is not a
+claim of physical maximum speed.
 
 Observed obstacle-detection intervals were approximately 0.075 ms to the zero velocity command,
 1.276 ms to Motion Authority withdrawal, and 30.8 ms to STM32 stop confirmation. These are successful

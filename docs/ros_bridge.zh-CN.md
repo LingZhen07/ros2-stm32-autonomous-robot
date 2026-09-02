@@ -1,12 +1,10 @@
 # Orange Pi / STM32 ROS 桥接
 
-状态：**VERIFIED — 物理 CAN FD 已验收，生产启动配置已完成**
-
 English: [ros_bridge.md](ros_bridge.md)
 
 ## 范围
 
-`robot_stm32_bridge` 是 Linux SocketCAN 与已冻结的 RobotProject Communication Protocol 1.0
+`robot_stm32_bridge` 是 Linux SocketCAN 与 RobotProject Communication Protocol 1.0
 之间的长期 ROS 2 Humble 边界。它负责传输、主机会话、心跳、运动授权、车体命令序列化、
 遥测解码和 ROS 诊断。轮速控制、电机安全、传感器采集、看门狗和故障执行仍由 STM32 负责。
 
@@ -19,37 +17,35 @@ STM32 -> RK3588 CAN3 -> SocketCAN can3 -> robot_stm32_bridge -> ROS telemetry
 /scan -> straight_obstacle_stop_demo -> /cmd_vel
 ```
 
-## 当前边界
+## CAN FD 配置
 
-| 项目 | 状态 |
+| 项目 | 配置 / 观测 |
 |---|---|
-| Protocol 1.0 线协议 | `FROZEN` |
-| 40Pin Pin 36 -> GPIO2_17 / CAN_TX3 -> TJA1042 TXD | `FROZEN` |
-| 40Pin Pin 11 -> GPIO2_18 / CAN_RX3 <- TJA1042 RXD | `FROZEN` |
-| CAN3 Pinctrl | TX `<0x40 0x1>` / GPIO2_17，RX `<0x44 0x1>` / GPIO2_18（`VERIFIED`） |
-| CAN3 Controller | `mttcan@3`、`mttcan-id=3`、`822d0000.mttcan`（`VERIFIED`） |
-| CAN3 SocketCAN Interface | `can3`（`FROZEN` Production Default） |
-| 外部 CAN Transceiver 系列 | TJA1042T(K)/3（用户确认的系列，`VERIFIED`） |
-| CANH/CANL、共地、总线两端各 120 Ω | 已物理确认，`VERIFIED` |
-| Nominal 500 kbit/s + Data 2 Mbit/s + CAN FD+BRS | `VERIFIED`；Linux Sample Point 固定 80% / 82.5% |
-| 双向 Protocol 1.0 通信 | `PASS`；真实 `0x080`、`0x082`、`0x180..0x183`，机器人 DISARMED |
-| 直行遇障停车实车演示 | `TBD` |
+| 线协议 | Protocol 1.0 |
+| Orange Pi TX | 40Pin Pin 36 -> GPIO2_17 / CAN_TX3 -> TJA1042T(K)/3 TXD |
+| Orange Pi RX | 40Pin Pin 11 -> GPIO2_18 / CAN_RX3 <- TJA1042T(K)/3 RXD |
+| CAN3 Pinctrl | TX `<0x40 0x1>` / GPIO2_17；RX `<0x44 0x1>` / GPIO2_18 |
+| CAN3 Controller | `mttcan@3`、`mttcan-id=3`、`822d0000.mttcan` |
+| SocketCAN Interface | `can3` |
+| CAN Transceiver | TJA1042T(K)/3 |
+| Bus Topology | CANH/CANL、共地、总线两端各一个 120 Ω 终端 |
+| CAN FD | Nominal 500 kbit/s、Data 2 Mbit/s、BRS；Linux Sample Point 80% / 82.5% |
+| 已观测流量 | 双向 `0x080`、`0x082`、`0x180..0x183`；机器人 DISARMED |
 
 生产接线为：
 
 ```text
-40Pin Pin 36 -> GPIO2_17 / CAN_TX3 -> TJA1042 TXD
-40Pin Pin 11 -> GPIO2_18 / CAN_RX3 <- TJA1042 RXD
+40Pin Pin 36 -> GPIO2_17 / CAN_TX3 -> TJA1042T(K)/3 TXD
+40Pin Pin 11 -> GPIO2_18 / CAN_RX3 <- TJA1042T(K)/3 RXD
 -> mttcan@3 / mttcan-id 3 / Controller Base 0x822d0000
 -> SocketCAN can3
 ```
 
-已安装的 Board-specific Device Tree 保留 Vendor Board ID `0x280B` 并暴露冻结 CAN3 路径。
-旧 `822c0000.mttcan` / `can2` 仅为历史且已弃用，因为它不能驱动已接线的 CAN3 Pin；生产环境
-不存在 CAN2 Fallback。
+已安装的 Board-specific Device Tree 保留 Vendor Board ID `0x280B` 并暴露 CAN3。旧
+`822c0000.mttcan` / `can2` 仅为历史，因为它不能驱动已接线的 CAN3 Pin；不存在 CAN2 Fallback。
 
-Linux Driver 默认 Sample Point 曾与 STM32 Timing 不匹配并产生持续 CAN Error。最终验证的
-Production Profile 显式固定 500 kbit/s @ 80.0% 与 2 Mbit/s @ 82.5%。真实总线保持 Error Active，
+Linux Driver 默认 Sample Point 曾与 STM32 Timing 不匹配并产生持续 CAN Error。启动配置显式
+设置 500 kbit/s @ 80.0% 与 2 Mbit/s @ 82.5%。真实总线保持 Error Active，
 TX Error=0、RX Error=0、Bus Error=0、Bus-off=0。
 
 ## 包结构
@@ -65,8 +61,8 @@ TX Error=0、RX Error=0、Bus Error=0、Bus-off=0。
 | `straight_obstacle_stop_demo.launch.py` | 桥接和调试演示 |
 | `m5_commissioning.yaml` | 保守且可覆盖的调试默认值 |
 | `configure_can3.sh` | 幂等验证并配置 CAN3 Controller/Timing |
-| `robot-can3.service` | 开机 CAN3 Ready Gate |
-| `robot-stm32-bridge.service` | 仅在 CAN3 Ready 后启动 DISARMED Bridge |
+| `robot-can3.service` | 开机 CAN3 可用性 Gate |
+| `robot-stm32-bridge.service` | 仅在 CAN3 可用后启动 DISARMED Bridge |
 
 ## ROS 接口
 
@@ -106,10 +102,10 @@ STM32 不提供姿态，因此桥接设置 `orientation_covariance[0] = -1`，�
 
 | 参数 | 默认值 | 含义 |
 |---|---:|---|
-| `can_interface` | `can3` | 冻结 Production SocketCAN Interface；无 CAN2 Fallback |
+| `can_interface` | `can3` | SocketCAN Interface；无 CAN2 Fallback |
 | `cmd_vel_topic` | `/cmd_vel` | 与未来 Nav2 兼容的生产命令 Topic |
 | `imu_frame_id` | `imu_link` | 仅为 Frame 标签，不创建 TF |
-| `command_timeout_ms` | `100` | 主机超时，显著小于 STM32 已冻结的 250 ms 截止时间 |
+| `command_timeout_ms` | `100` | 主机超时，显著小于 STM32 的 250 ms 截止时间 |
 | `status_timeout_ms` | `350` | SYSTEM_STATUS 允许的最大年龄 |
 | `reconnect_period_ms` | `1000` | 传输故障后的 Socket 重连周期 |
 
@@ -120,14 +116,14 @@ STM32 不提供姿态，因此桥接设置 `orientation_covariance[0] = -1`，�
 | `forward_speed_mps` | `0.30` | 当前最高合理 Commissioning Speed；不得超过 0.30 m/s |
 | `stop_distance_m` | `0.60` | 0.30 m/s 下的保守 Commissioning 障碍物阈值 |
 | `front_sector_deg` | `30.0` | 前方检测扇区总角宽 |
-| `front_center_deg` | `180.0` | 已冻结 yaw=π 的 `laser_frame` 中，机器人前方对应的角度 |
-| `scan_timeout_ms` | `400` | Scan 过期的故障安全截止时间 |
+| `front_center_deg` | `180.0` | yaw=π 的 `laser_frame` 中，机器人前方对应的角度 |
+| `scan_timeout_ms` | `400` | Steady Clock 接收年龄和 ROS 源时间戳年龄的共同上限 |
 | `bridge_timeout_ms` | `300` | Bridge Status 过期的故障安全截止时间 |
 
-这些是调试默认值，不是已冻结的机器人安全规格。只有在检查真实测试环境后，才能通过
+这些是调试默认值，不是机器人安全规格。只有在检查真实测试环境后，才能通过
 Launch 参数文件或 `--ros-args -p name:=value` 覆盖。
-该调试固件最多接受 0.30 m/s Body Linear Speed。0.60 m 阈值有意保持保守，但不是冻结的机器人
-安全距离；在降低该值或声明最终安全规格前，必须实测 0.30 m/s 的物理停车距离。
+该调试固件最多接受 0.30 m/s Body Linear Speed。0.60 m 阈值有意保持保守，但不是实测的机器人
+安全距离；在降低该值或定义安全限值前，必须实测 0.30 m/s 的物理停车距离。
 
 ## 协议行为
 
@@ -139,7 +135,7 @@ Launch 参数文件或 `--ros-args -p name:=value` 覆盖。
 | STM32 到主机 | `0x180` Status；`0x181` Wheel；`0x182` IMU；`0x183` Battery |
 
 每个进程/控制会话使用新的非零 32 位 Session ID 和独立的 16 位 Sequence Stream。Arm
-必须完成已冻结的事务：
+必须完成以下事务：
 
 ```text
 HOST_HEARTBEAT(BRIDGE_READY)
@@ -154,7 +150,29 @@ HOST_HEARTBEAT(BRIDGE_READY)
 阻断运动。Sequence Gap、Duplicate、Old Frame 会计数。CAN Error、Bus-off、Socket Failure、
 Stale Status、STM32 Critical Fault 和 Invalid Command 都进入安全路径。
 
-## 演示状态模型
+## 运动安全与遇障停车状态
+
+持续采用的运动安全合同为：
+
+```text
+显式 START
+-> Motion Authority Granted
+-> Fresh Motion Commands
+-> Motion Allowed
+```
+
+系统默认禁止运动，Motion Authority 独立于 Velocity Command。停止过程采用分层撤销 Motion
+Authority：
+
+```text
+Obstacle / Stale Command / Communication Loss / Fault / Explicit STOP
+-> 在可用处发送 Zero Motion Command
+-> Motion Authority Withdrawn
+-> STM32 Motor-safe Stop
+```
+
+Motion Authority 丢失或被撤销都会停止运动。Command Freshness、Heartbeat/Watchdog 与 Fault
+Handling 仍是相互独立的底层保护。遇障停车节点使用以下面向操作员的锁存状态：
 
 ```text
 STOPPED --显式 START + Authority 确认--> RUNNING
@@ -166,6 +184,17 @@ STOPPED --显式 START + Authority 确认--> RUNNING
 发布 Zero Twist。前方扇区任一有效有限样本小于等于阈值时，在同一个 20 ms Control Cycle 内
 发布 Zero Twist 并调用 Bridge Disarm。障碍物移除后 STOPPED 仍锁存；只有新的显式 `~/start`
 才能开始下一次运行，旧命令、旧 Authority 和障碍物移除都不能自动恢复运动。
+
+Scan 运动门同时要求：可用 Scan 在 `scan_timeout_ms` 内按 Steady Clock 被接收，且其非零
+`header.stamp` 按节点当前 ROS Clock 计算也不超过同一个超时值。固定 50 ms 的未来容差仅用于
+轻微调度/时钟偏差；更远的未来时间戳、零时间戳，以及无法与当前 ROS Clock 有意义比较的
+时间戳均无效。接收超时、源时间戳过期和源时间戳无效都复用现有 Zero Twist、撤销 Authority、
+锁存 STOPPED 路径。有效 Scan 恢复后绝不自动恢复运动。
+
+2026-09-02 使用真实 RPLIDAR A1 以 10 Hz 运行时，
+`ros2 topic delay /scan` 在 10 个样本窗口内测得源时间戳平均年龄约 0.133-0.134 s（观测范围约
+0.123-0.136 s）。Production Predicate 报告 `scan_fresh: true`，同时节点保持 STOPPED 且未获得
+Authority；整个验证未调用 START。
 
 `DemoStatus` 记录障碍物检测、Zero Twist 发布、Disarm 请求、Bridge Authority Withdrawal
 发送以及 STM32 Safe Status 确认时间戳。这些仅为软件/命令路径时序，不是物理停车距离证据。
@@ -200,7 +229,7 @@ Bridge 启动保持 DISARMED；未显式请求运动时不发送 `0x081`。运�
 故障后会禁止自动 Socket Reconnect，避免持续 ENOBUFS；修复 `can3` 后重启 Bridge Service，
 以新安全 Session 恢复。
 
-## 构建和非执行器验收
+## 构建和非执行器检查
 
 ```bash
 conda deactivate 2>/dev/null || true
@@ -213,13 +242,13 @@ colcon test-result --verbose
 ros2 launch robot_stm32_bridge bridge.launch.py
 ```
 
-Bridge-only Launch 始终保持 DISARMED。物理链路已通过 Production Bridge 验收：Host/STM32
-必需帧双向交换，Protocol 1.0 有效且 CAN Error 无异常。
+Bridge-only Launch 始终保持 DISARMED。Host/STM32 必需帧通过 Bridge 双向交换，Protocol 1.0
+有效且 CAN Error 无异常。
 
-最终 M5 运动决策门已在实机通过。后续运行仍必须确认 BODY_COMMAND_READY，并在调用 Demo
-`~/start` 前准备好 Commissioning 区域、障碍物与紧急人工干预。
+后续底盘调试仍必须确认 BODY_COMMAND_READY，并在调用 Demo `~/start` 前准备好 Commissioning
+区域、障碍物与紧急人工干预。
 
-## 最终 M5 实机演示
+## 遇障停车实机演示
 
 systemd Service 已独占唯一 Production Bridge，因此 Demo Launch 只启动
 `straight_obstacle_stop_demo`：
@@ -238,9 +267,9 @@ ros2 service call /straight_obstacle_stop_demo/stop std_srvs/srv/Trigger '{}'
 ros2 topic echo /straight_obstacle_stop_demo/status --once
 ```
 
-**状态：PASS。** 已验收顺序为：显式 START、持续 0.30 m/s 闭环直行、真实 RPLIDAR A1
+实机演示顺序为：显式 START、持续 0.30 m/s 闭环直行、真实 RPLIDAR A1
 `/scan` 在 30° 前方扇区和 0.60 m 阈值内检出障碍物、Zero Velocity 与 Motion Authority
-Withdrawal、STM32 Safe Stop、移除障碍物后 STOPPED 仍锁存、再发出新的显式 START。STOP
+Withdrawal、STM32 Motor-safe Stop、移除障碍物后 STOPPED 仍锁存、再发出新的显式 START。STOP
 Service 是操作员的即时 ROS 侧撤权命令；STM32 Safety 保持权威。
 
 成功 Demo 中从 Obstacle Detection 起的观测值：
@@ -251,5 +280,5 @@ Service 是操作员的即时 ROS 侧撤权命令；STM32 Safety 保持权威。
 | Motion Authority Withdrawal | 约 `1.276 ms` |
 | STM32 Stop Confirmation | 约 `30.8 ms` |
 
-以上是成功验收运行的观测测量值，不是有保证的最坏情况安全上限。已验收的 0.30 m/s 是当前
+以上是实机演示的观测测量值，不是有保证的最坏情况安全上限。0.30 m/s 是当前
 Commissioning Limit，不代表机器人物理最高速度。
