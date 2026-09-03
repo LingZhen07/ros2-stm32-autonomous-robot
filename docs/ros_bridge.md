@@ -62,7 +62,7 @@ bus-errors 0, and bus-off 0.
 | `DemoStatus.msg` | Latched demo state and stop-latency timestamps |
 | `bridge.launch.py` | DISARMED bridge-only bring-up |
 | `straight_obstacle_stop_demo.launch.py` | Bridge plus commissioning demo |
-| `m5_commissioning.yaml` | Conservative, overrideable commissioning defaults |
+| `drivetrain_commissioning.yaml` | Conservative, overrideable defaults used by the drivetrain and obstacle-stop demo |
 | `configure_can3.sh` | Idempotent CAN3/controller/timing verification and setup |
 | `robot-can3.service` | Boot-time CAN3 availability gate |
 | `robot-stm32-bridge.service` | Starts the DISARMED bridge only after CAN3 is ready |

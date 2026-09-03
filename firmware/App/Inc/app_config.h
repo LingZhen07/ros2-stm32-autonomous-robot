@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* Development firmware identity for the integrated M5 firmware baseline. */
+/* Development firmware identity for the integrated drivetrain-control baseline. */
 #define APP_VERSION_MAJOR                       0U
 #define APP_VERSION_MINOR                       5U
 #define APP_VERSION_PATCH                       4U
@@ -30,7 +30,7 @@
 #define APP_DRIVETRAIN_RIGHT_COUNTS_PER_WHEEL_REV 1059.5f
 
 /*
- * M5 production commissioning envelope. These are deliberately below a
+ * Production drivetrain commissioning envelope. These values are deliberately below a
  * claimed hardware maximum: installed-motor current/speed and TB6612 module
  * thermal margin have not yet been measured under robot load.
  */

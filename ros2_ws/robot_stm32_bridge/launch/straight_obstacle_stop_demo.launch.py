@@ -9,7 +9,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     package_share = Path(get_package_share_directory("robot_stm32_bridge"))
-    default_config = str(package_share / "config" / "m5_commissioning.yaml")
+    default_config = str(package_share / "config" / "drivetrain_commissioning.yaml")
 
     return LaunchDescription(
         [

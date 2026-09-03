@@ -23,10 +23,10 @@ Action required:
 
 ---
 
-## 2026-08-31T22:38:53+08:00 — M5 real-hardware demo accepted and public repository identity updated
+## 2026-08-31T22:38:53+08:00 — Closed-loop drivetrain demo accepted and public repository identity updated
 
 Domain: System
-Impact: M5 is complete on real hardware. Protocol 1.0 and all firmware/ROS runtime identifiers are unchanged; the public GitHub repository identity is now `LingZhen07/ros2-stm32-autonomous-robot`.
+Impact: The closed-loop drivetrain and obstacle-stop integration is complete on real hardware. Protocol 1.0 and all firmware/ROS runtime identifiers are unchanged; the public GitHub repository identity is now `LingZhen07/ros2-stm32-autonomous-robot`.
 
 Changed:
 - Firmware `0.5.4`, BODY_COMMAND_READY, Motion Authority, closed-loop wheel control, and the production CAN3 physical link passed the final integrated demo.
@@ -53,7 +53,7 @@ Action required:
 - Deploy and enable the version-controlled `robot-can3.service` and `robot-stm32-bridge.service` on the Orange Pi after building the updated package.
 - The next safety-gated milestone is the controlled straight-drive and latched LiDAR obstacle-stop demo.
 
-## 2026-08-29T17:53:32+08:00 — M5 BODY_VELOCITY drivetrain handoff ready in firmware 0.5.4
+## 2026-08-29T17:53:32+08:00 — BODY_VELOCITY drivetrain handoff ready in firmware 0.5.4
 
 Domain: Firmware
 Impact: Protocol 1.0 is unchanged. The ROS bridge may now treat STM32 BODY_COMMAND_READY as true when the existing session, communication, runtime-health, and safety gates are also valid; physical straight-drive acceptance is still required before the `/scan` demo.
@@ -129,7 +129,7 @@ Action required:
 - Cross-domain integration: observe real bidirectional FD+BRS frames and Error Active state before declaring the physical CAN link PASS.
 - Firmware commissioning: retain BODY_VELOCITY gating until measured drivetrain mapping, geometry, encoder scale, operating limits, and controller gains are configured.
 
-## 2026-08-24T20:45:25+08:00 — STM32 M5 firmware side ready for cross-domain acceptance
+## 2026-08-24T20:45:25+08:00 — STM32 body-velocity control firmware ready for cross-domain acceptance
 
 Domain: Firmware
 Impact: The production STM32 firmware is ready for physical Orange Pi/STM32 CAN FD integration against unchanged Protocol 1.0. Closed-loop BODY_VELOCITY execution remains deliberately gated by real drivetrain measurements and controller commissioning.
@@ -143,10 +143,10 @@ Changed:
 Action required:
 - ROS domain: proceed with physical Protocol 1.0 integration. Do not expect STM32 ACTIVE/BODY_VELOCITY until wheel/motor mapping, motor polarity, wheel radius, track, encoder scale, gear ratio, operating limits, and wheel-controller gains are measured/configured.
 
-## 2026-08-24T13:38:04+08:00 — Communication Protocol v1 frozen and STM32 M4 complete
+## 2026-08-24T13:38:04+08:00 — Communication Protocol v1 frozen and STM32 CAN FD transport complete
 
 Domain: Interface
-Impact: STM32 M1-M3 physical acceptance is PASS, and the stable CAN FD boundary is ready for the Orange Pi ROS bridge implementation. The ROS domain can implement entirely from `interfaces/protocol_v1.md`, `interfaces/protocol_v1.yaml`, and the golden frames.
+Impact: STM32 peripheral, sensor, motor, and safety bring-up passed physical acceptance, and the stable CAN FD boundary is ready for the Orange Pi ROS bridge implementation. The ROS domain can implement entirely from `interfaces/protocol_v1.md`, `interfaces/protocol_v1.yaml`, and the golden frames.
 
 Changed:
 - Real STM32 execution, USART2, encoder acquisition, ICM-42688-P, battery ADC, TIM1 PWM, TB6612 control, and motor rotation are accepted hardware facts.
@@ -162,7 +162,7 @@ Action required:
 - ROS domain: inspect the real Orange Pi CAN capability, configure SocketCAN FD for 500 kbit/s / 2 Mbit/s, implement the bridge exactly against Protocol v1, and preserve the required authority/session/freshness behavior.
 - Cross-domain integration: verify the exact transceiver module, termination, logic levels, and real bidirectional CAN FD frames before claiming physical CAN acceptance.
 
-## 2026-08-24T11:11:42+08:00 — STM32 M1-M3 firmware ready for hardware acceptance
+## 2026-08-24T11:11:42+08:00 — STM32 peripheral, RTOS, and safety firmware ready for hardware acceptance
 
 Domain: Firmware
 Impact: The STM32 production firmware foundation now builds locally and is ready for first physical acceptance. The ROS domain must not assume hardware acceptance or a finalized CAN application protocol.

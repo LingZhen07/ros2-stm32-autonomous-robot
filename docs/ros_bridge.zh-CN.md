@@ -59,7 +59,7 @@ TX Error=0、RX Error=0、Bus Error=0、Bus-off=0。
 | `DemoStatus.msg` | 锁存的演示状态和停车时延时间戳 |
 | `bridge.launch.py` | 仅启动 DISARMED 桥接 |
 | `straight_obstacle_stop_demo.launch.py` | 桥接和调试演示 |
-| `m5_commissioning.yaml` | 保守且可覆盖的调试默认值 |
+| `drivetrain_commissioning.yaml` | 底盘与遇障停车演示使用的保守、可覆盖默认值 |
 | `configure_can3.sh` | 幂等验证并配置 CAN3 Controller/Timing |
 | `robot-can3.service` | 开机 CAN3 可用性 Gate |
 | `robot-stm32-bridge.service` | 仅在 CAN3 可用后启动 DISARMED Bridge |
