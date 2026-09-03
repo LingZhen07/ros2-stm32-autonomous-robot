@@ -1,296 +1,309 @@
-# AGENTS.md — RobotProject Engineering Rules
+# AGENTS.md — RobotProject Engineering Contract
 
-> **Repository policy:** This file is the mandatory operating contract for every Codex CLI session working on RobotProject.
+> Mandatory operating contract for every Codex CLI session working on RobotProject.
 >
-> **Codex MUST read this file before starting a stage. Codex MUST NOT modify this file.**
+> **Read this file before every stage. Follow it at all times. Modify it only when the user explicitly requests a repository-policy update.**
 >
-> This document is intentionally written in English so both Codex instances use the same unambiguous engineering contract.
+> This file is English-only so Firmware Codex and ROS Codex share one unambiguous contract.
 
 ---
 
-## 1. Project Mission
+## 1. Mission and Production-Execution Policy
 
-RobotProject is a long-term heterogeneous mobile-robot engineering project built around:
+RobotProject is a real-hardware differential-drive autonomous robot using:
 
-- an Orange Pi AI Pro high-computing domain running Ubuntu 22.04 and ROS 2 Humble;
-- Ascend 310B4 acceleration for perception;
-- an STM32G474RET6 real-time control domain;
-- differential-drive motors with quadrature encoders;
-- an ICM-42688-P IMU;
-- a TB6612-based dual DC motor driver;
-- CAN / CAN FD as the production control-transport direction;
-- UART as a bring-up and fallback diagnostic path;
-- ROS 2 Nav2 for high-level navigation.
+- Orange Pi AI Pro 8GB, Ubuntu 22.04.5, ROS 2 Humble, Ascend 310B4;
+- STM32G474RET6 real-time control;
+- TB6612 motors, hardware quadrature encoders and ICM-42688-P IMU;
+- RPLIDAR A1;
+- production CAN FD between Orange Pi `can3` and STM32 FDCAN1;
+- ROS 2 mapping, localization and Nav2.
 
-The target is a maintainable embedded robotics system rather than a single-board demo:
+Current objective:
 
 ```text
-Embedded Linux
-+ ROS 2
-+ NPU perception
-+ SLAM / Navigation
-+ MCU real-time control
-+ sensors
-+ CAN
-+ safety
-+ wheel odometry
-+ closed-loop autonomous navigation
+0x181 wheel telemetry
+→ ROS wheel odometry
+→ odom → base_link
+→ LiDAR mapping
+→ saved map
+→ localization
+→ Nav2
+→ explicit goal
+→ autonomous physical motion
+→ target reached
 ```
 
-Engineering strategy:
+The accepted LiDAR emergency-stop path remains an independent safety layer.
+
+### Execution rule
+
+Only perform work that directly advances the current real project or real-hardware demo.
 
 ```text
-REAL SYSTEM
-→ INSPECT
-→ DEFINE INTERFACE
-→ MINIMAL VALID IMPLEMENTATION
-→ BUILD
-→ RUN
-→ VERIFY REAL BEHAVIOR
+INSPECT ONLY WHAT IS NEEDED
+→ MAKE THE SMALLEST VALID CHANGE
+→ BUILD WHEN NEEDED
+→ RUN ONLY NECESSARY SIMPLE VALIDATION
 → FIX ACTUAL FAILURES
 → ACCEPT
-→ FREEZE
+→ DOCUMENT
 → MOVE FORWARD
 ```
 
-Do not over-engineer a subsystem before the next subsystem can be integrated.
+Do not perform broad regression testing, repeated acceptance testing, speculative benchmarks, exhaustive diagnostics, infrastructure work, refactoring, or re-validation of already accepted behavior unless a concrete current change or observed failure requires it.
+
+Prefer no test over an irrelevant test. Prefer one bounded validation over a broad test campaign.
+
+Do not bypass safety protections for testing.
 
 ---
 
-## 2. Repository Layout and Ownership
+## 2. Repository Ownership and Isolation
 
 ```text
 RobotProject/
-├── firmware/       # STM32G474 firmware domain
-├── ros2_ws/        # ROS 2 / Orange Pi software domain
-├── interfaces/     # Cross-domain CAN / UART protocol contracts
-├── docs/           # Project knowledge base, English + Chinese
-├── AGENTS.md       # Mandatory shared agent policy — READ ONLY
-├── CHANGELOG.md    # Cross-domain engineering communication log — English
-├── README.md       # Primary GitHub-facing README — English
-└── README.zh-CN.md # Chinese README
+├── firmware/       # STM32 domain
+├── ros2_ws/        # ROS 2 / Orange Pi domain
+├── interfaces/     # shared protocol contract
+├── docs/           # persistent technical knowledge
+├── AGENTS.md       # shared policy — user-managed
+├── CHANGELOG.md    # cross-domain communication
+├── README.md
+└── README.zh-CN.md
 ```
 
-There are two independent Codex roles.
+### Firmware Codex
 
-### 2.1 Firmware Codex
+Owns `firmware/`, firmware-related documentation, and `interfaces/` only when interface work is required.
 
-Primary write scope:
+May read shared documentation and relevant `CHANGELOG.md` entries.
 
-```text
-RobotProject/firmware/
-```
+**Must never inspect, analyze, edit, build, or modify `ros2_ws/`.**
 
-Shared read scope:
+Firmware responsibilities include STM32CubeMX/`.ioc`, FreeRTOS/HAL, FDCAN, motors, encoders, wheel control, IMU, battery acquisition, telemetry, watchdogs, Motion Authority, faults, Safety Supervisor and Protocol 1.0 firmware implementation.
 
-```text
-RobotProject/AGENTS.md
-RobotProject/CHANGELOG.md
-RobotProject/interfaces/
-RobotProject/docs/
-RobotProject/README.md
-RobotProject/README.zh-CN.md
-```
+Firmware Codex must not implement ROS nodes, TF, host odometry, SLAM, localization, Nav2, ROS costmaps or ROS sensor fusion.
 
-Shared write scope, only when relevant:
+### ROS Codex
 
-```text
-RobotProject/CHANGELOG.md
-RobotProject/docs/
-RobotProject/README.md
-RobotProject/README.zh-CN.md
-RobotProject/interfaces/
-```
+Owns `ros2_ws/`, ROS configuration and ROS documentation.
 
-The Firmware Codex **must not inspect or modify `ros2_ws/`** unless the user explicitly authorizes a cross-domain investigation.
+May read `interfaces/`, shared technical documentation and relevant `CHANGELOG.md` entries.
 
-### 2.2 ROS Codex
+**Must never inspect, analyze, edit, build, or modify firmware source code.**
 
-Primary write scope:
+Consume firmware only through documented shared interfaces.
 
-```text
-RobotProject/ros2_ws/
-```
+ROS responsibilities include CAN bridge, Protocol 1.0 decoding, host odometry, TF, RPLIDAR, mapping, map handling, localization, Nav2, launch/parameters, diagnostics and navigation-demo integration.
 
-Runtime environment:
+Do not duplicate STM32 safety logic in ROS.
 
-```text
-HwHiAiUser@robot-core.local
-/data/ros2_ws
-/data/projects
-```
+### Cross-domain coordination
 
-Shared read scope:
-
-```text
-RobotProject/AGENTS.md
-RobotProject/CHANGELOG.md
-RobotProject/interfaces/
-RobotProject/docs/
-RobotProject/README.md
-RobotProject/README.zh-CN.md
-```
-
-Shared write scope, only when relevant:
-
-```text
-RobotProject/CHANGELOG.md
-RobotProject/docs/
-RobotProject/README.md
-RobotProject/README.zh-CN.md
-RobotProject/interfaces/
-```
-
-The ROS Codex **must not inspect or modify `firmware/`** unless the user explicitly authorizes a cross-domain investigation.
-
-### 2.3 Cross-domain rule
-
-The two Codex instances communicate through:
+Communicate through:
 
 ```text
 interfaces/
 CHANGELOG.md
 docs/
-milestone reports
+accepted milestone reports
 ```
 
-Do not use the peer implementation directory as an informal communication mechanism.
+Do not use the peer implementation directory as an informal communication path.
 
-The goal is to minimize unnecessary code reading, duplicated analysis, context consumption, and cross-domain coupling.
+Do not run both Codex roles in parallel merely because both exist. Run both only when the work is genuinely independent and the shared contract is already stable. If one domain produces an input required by the other, finish that dependency first.
 
 ---
 
-## 3. Shared Files
+## 3. Sources of Truth and Inspection Discipline
 
-### 3.1 `AGENTS.md`
-
-Rules:
+Priority:
 
 ```text
-READ before every project stage.
-FOLLOW at all times.
-DO NOT MODIFY.
+1. accepted real measured behavior
+2. production source / generated configuration
+3. frozen interfaces/
+4. current docs and CHANGELOG.md
+5. official manufacturer/upstream documentation
+6. secondary references only when necessary
 ```
 
-### 3.2 `interfaces/`
+Never turn an assumption, commissioning value or intended design into a verified hardware fact.
 
-This directory is the authoritative software contract between the Linux high-computing domain and the STM32 real-time domain.
+Before changing code, read only what is relevant:
 
-It will eventually define:
+1. `AGENTS.md`;
+2. applicable technical documentation;
+3. applicable interface documentation;
+4. recent relevant `CHANGELOG.md` entries;
+5. the implementation being changed.
 
-- CAN / CAN FD message IDs;
-- command semantics;
-- telemetry semantics;
-- binary packing;
-- byte order;
-- integer scaling;
-- units;
-- sequence numbers;
-- timestamps;
-- heartbeat semantics;
-- timeout semantics;
-- protocol versioning;
-- compatibility rules.
+Do not rediscover or re-test frozen facts unless a current contradiction or blocker exists.
 
-Do **not** freeze protocol details before they are deliberately designed.
+Frozen hardware resources must not be remapped or reconfigured for stylistic reasons. If CubeMX owns a required peripheral/clock/NVIC/RTOS configuration, keep `.ioc` synchronized with production firmware.
 
-A protocol change that changes meaning, packing, timing semantics, IDs, compatibility, or safety behavior is a **cross-domain architecture decision** and requires a decision report unless already explicitly approved by the current task.
+Use hardware encoder peripherals; do not replace TIM2/TIM3 quadrature decoding with high-rate GPIO polling.
 
-Once a protocol contract is frozen, both domains implement against `interfaces/`; neither domain invents private incompatible variants.
-
-### 3.3 `CHANGELOG.md`
-
-`CHANGELOG.md` is not a commit diary.
-
-It is a low-overhead communication channel for changes that:
-
-1. affect both domains; or
-2. change a shared contract; or
-3. create a new constraint the peer Codex must know; or
-4. complete a project milestone that changes the next integration boundary.
-
-The file must remain **English-only**.
-
-Every entry must include an ISO-8601 timestamp with timezone.
-
-Preferred format:
-
-```text
-## 2026-08-23T20:25:00+08:00 — Short title
-
-Domain: Firmware | ROS | Interface | System
-Impact: <what the other agent must know>
-Changed:
-- ...
-
-Action required:
-- None
-```
-
-Do not record trivial local refactors, formatting changes, temporary debugging, or isolated implementation details that cannot affect the other domain.
-
-### 3.4 `docs/`
-
-`docs/` is the project knowledge base.
-
-For persistent project knowledge, maintain both:
-
-```text
-English
-Chinese
-```
-
-Documentation should track:
-
-- hardware;
-- pin maps;
-- architecture;
-- interfaces;
-- bring-up procedures;
-- acceptance evidence;
-- safety behavior;
-- calibration results;
-- measured drivetrain parameters;
-- protocol definitions;
-- odometry architecture;
-- milestone records.
-
-Documentation must distinguish:
-
-```text
-VERIFIED
-FROZEN
-IN PROGRESS
-PROPOSED
-TBD
-```
-
-Never convert an assumption into a verified fact.
-
-### 3.5 README
-
-`README.md` is the primary GitHub-facing document and is English-first.
-
-`README.zh-CN.md` is the Chinese counterpart.
-
-Update README only when a milestone has strong project-showcase value, for example:
-
-- a subsystem becomes genuinely operational;
-- a major architecture boundary is completed;
-- real measured performance becomes available;
-- Orange Pi ↔ STM32 communication is demonstrated;
-- closed-loop wheel control works;
-- real `/odom` works;
-- Nav2 physically drives the robot;
-- autonomous navigation / obstacle avoidance is accepted.
-
-Do not turn README into a development log.
+Unsafe assumptions about power wiring, voltage compatibility, CAN termination/transceiver behavior, unknown electrical behavior or other physical hardware require a decision rather than invention in software or documentation.
 
 ---
 
-## 4. Current Verified Project State
+## 4. Current Accepted Production State
 
-### 4.1 High-computing domain
+### Firmware and drivetrain
+
+Accepted firmware:
+
+```text
+0.5.4
+```
+
+Accepted production behavior includes:
+
+- FreeRTOS and FDCAN1;
+- CAN FD + BRS;
+- hardware quadrature encoders;
+- closed-loop left/right wheel velocity control;
+- IMU and battery telemetry;
+- TB6612 motor control;
+- watchdog and command freshness supervision;
+- Motion Authority;
+- fault handling and motor-safe startup;
+- Safety Supervisor;
+- Protocol 1.0 telemetry and command handling.
+
+Commissioning limits:
+
+```text
+forward velocity:  0.30 m/s
+angular velocity:  ±1.50 rad/s
+wheel target:      approximately ±3000 count/s
+motor/PWM command: ±0.60
+```
+
+These are commissioning limits, not verified physical maxima.
+
+Accepted wheel mapping:
+
+```text
+Motor A   = right wheel
+Motor B   = left wheel
+Encoder 1 = right wheel
+Encoder 2 = left wheel
+```
+
+Raw forward signs:
+
+```text
+right motor command:        -1
+left motor command:         -1
+right encoder raw forward:  positive
+left encoder raw forward:   negative
+```
+
+Protocol logical wheel position/rate fields normalize forward as positive for both wheels.
+
+Commissioning geometry/scales:
+
+```text
+left:        0.0001362305 m/count
+right:       0.0001363976 m/count
+wheel radius: 0.023 m
+track width:  0.125 m
+half track:   0.0625 m
+```
+
+```text
+v_left  = v - omega * 0.0625
+v_right = v + omega * 0.0625
+```
+
+Do not average left/right wheel scales. Do not derive drivetrain geometry from the Nav2 footprint.
+
+### Production CAN FD
+
+```text
+interface:            can3
+can2:                 deprecated
+nominal bitrate:      500000
+nominal sample point: 0.800
+data bitrate:         2000000
+data sample point:    0.825
+BRS:                  enabled
+bus error reporting:  enabled
+```
+
+Accepted CAN3 real-hardware state: ERROR-ACTIVE, zero TX/RX error counters, zero bus errors, zero bus-off and stable bidirectional traffic.
+
+Do not repeat CAN bring-up/acceptance testing unless a current CAN change or failure requires it.
+
+### Frozen Protocol 1.0
+
+Authoritative sources:
+
+```text
+interfaces/protocol_v1.md
+interfaces/protocol_v1.yaml
+protocol examples under interfaces/
+```
+
+```text
+0x080 Motion Authority
+0x081 Body Motion Command
+0x082 Host Heartbeat
+0x180 System / Safety Status
+0x181 Wheel / Encoder State
+0x182 IMU
+0x183 Battery
+```
+
+Transport: 11-bit standard CAN ID, CAN FD, BRS, little-endian.
+
+```text
+command timeout:   250 ms
+heartbeat timeout: 500 ms
+authority timeout: 500 ms
+motion modes:      DISABLED, BODY_VELOCITY
+```
+
+Protocol 1.0 is frozen. Do not redesign, extend or reinterpret it unless a demonstrated blocker proves it insufficient.
+
+### Accepted `0x181` odometry readiness
+
+```text
+VERDICT: 0x181 SUFFICIENT
+FIRMWARE CHANGE: NONE
+```
+
+Use normalized cumulative logical wheel positions for pose:
+
+```text
+left_position_counts   signed i64, forward-positive cumulative counts
+right_position_counts  signed i64, forward-positive cumulative counts
+```
+
+Do not integrate pose from raw 16-bit timer counters or filtered wheel-rate fields.
+
+Required host semantics:
+
+```text
+protocol version:      1.0
+sequence:              modulo 2^16
+timestamp_ms:          STM32 monotonic ms, modulo 2^32
+0x181 period:          20 ms / 50 Hz
+encoder sample period: 10 ms / 100 Hz
+```
+
+Integrate only when `flags` bits 0, 1 and 2 are all valid. Invalid logical positions use `INT64_MIN`; invalid rates use `INT32_MIN`; flags remain authoritative.
+
+Firmware already unwraps raw encoder rollover into signed i64 cumulative positions.
+
+ROS must detect MCU reset/timestamp discontinuity and re-baseline without integrating the reset jump. Sequence gaps do not lose traveled distance because positions are cumulative.
+
+This firmware-readiness question is closed. Do not re-audit `0x181` unless ROS finds concrete contradictory interface evidence.
+
+### Orange Pi / ROS baseline
 
 ```text
 Orange Pi AI Pro 8GB
@@ -299,18 +312,9 @@ aarch64
 Vendor Linux 5.10 BSP
 ROS 2 Humble
 Ascend 310B4
-```
-
-Primary runtime workspace:
-
-```text
-/data/ros2_ws
-```
-
-Project data:
-
-```text
-/data/projects
+workspace: /data/ros2_ws
+project data: /data/projects
+expected ROS Python: /usr/bin/python3
 ```
 
 ROS environment:
@@ -320,104 +324,22 @@ conda deactivate 2>/dev/null || true
 source /opt/ros/humble/setup.bash
 ```
 
-Expected ROS Python:
+Do not replace the vendor kernel/BSP, perform broad system upgrades, reinstall a working CANN environment, or merge Conda Python into the ROS runtime Python environment.
+
+Existing RGB-D/perception work is frozen and outside the current navigation critical path. Do not reopen it without a demonstrated navigation blocker.
+
+### TF and navigation constraints
 
 ```text
-/usr/bin/python3
-```
-
-Do not:
-
-- replace the vendor kernel;
-- replace the BSP;
-- perform broad system upgrades;
-- reinstall a working CANN environment;
-- merge Conda Python into the ROS runtime Python environment.
-
-### 4.2 Frozen high-computing milestones
-
-```text
-Ascend 310B4 baseline                    COMPLETE / FROZEN
-ROS 2 foundation                         COMPLETE / FROZEN
-Astra RGB / Depth                        COMPLETE / FROZEN
-RGB-D registration                       COMPLETE / FROZEN
-YOLOv8n Ascend 2D detection              WORKING / FROZEN
-RPLIDAR A1                               COMPLETE / FROZEN
-Robot TF System v1                       COMPLETE / FROZEN
-rosbag2 / diagnostics                    COMPLETE / FROZEN
-Cartographer LiDAR SLAM v1               COMPLETE / FROZEN
-Navigation v1 Upper Computing Domain     COMPLETE / FROZEN
-```
-
-Perception is frozen for the current integration phase.
-
-Do not reopen perception, SLAM, costmap tuning, or navigation planning unless real STM32/downstream integration exposes a concrete blocker.
-
-### 4.3 Navigation boundary
-
-Nav2 command semantics:
-
-```text
-geometry_msgs/msg/Twist
-linear.x  [m/s]
-angular.z [rad/s]
-```
-
-Real wheel odometry is not yet available.
-
-Current physical execution boundary:
-
-```text
-Nav2 planning works
-Real motor execution does not exist yet
-Real /odom does not exist yet
-```
-
-Current Cartographer ownership of:
-
-```text
-odom → base_link
-```
-
-is temporary.
-
-When real wheel odometry is introduced, exactly one TF authority may own:
-
-```text
-odom → base_link
-```
-
-Never create duplicate TF publishers.
-
-### 4.4 Frozen geometry
-
-```text
-base_link origin:
-midpoint of left/right drive-wheel axle
-
+base_link origin = drive-wheel axle midpoint
 +X forward
 +Y left
 +Z up
 ```
 
 ```text
-base_link → camera_link
-x = +0.130 m
-y =  0.000 m
-z = +0.110 m
-roll = 0
-pitch = 0
-yaw = 0
-```
-
-```text
-base_link → laser_frame
-x = +0.043 m
-y =  0.000 m
-z = +0.165 m
-roll = 0
-pitch = 0
-yaw = π
+base_link → camera_link: x +0.130, y 0, z +0.110, roll 0, pitch 0, yaw 0
+base_link → laser_frame: x +0.043, y 0, z +0.165, roll 0, pitch 0, yaw π
 ```
 
 Frozen footprint:
@@ -427,1004 +349,400 @@ footprint: "[[0.140, 0.080], [0.140, -0.080], [-0.070, -0.080], [-0.070, 0.080]]
 footprint_padding: 0.01
 ```
 
-### 4.5 Frozen Navigation v1 runtime constraints
+Exactly one TF authority may publish `odom → base_link`. Never create duplicate TF publishers.
 
-Preserve:
-
-```text
-lifecycle_manager:
-bond_timeout: 0.0
-```
-
-Preserve scan-source obstacle-height configuration:
+Preserve accepted Navigation v1 settings when used:
 
 ```text
-max_obstacle_height: 2.0
+lifecycle_manager.bond_timeout = 0.0
+scan max_obstacle_height = 2.0
 ```
 
-Known standalone Humble costmap shutdown-only process-destruction exit `-11` is deferred and does not invalidate runtime acceptance.
-
-Do not investigate it without a real downstream blocker.
+Known standalone Humble costmap shutdown-only exit `-11` remains deferred. Do not investigate it unless it becomes a real blocker.
 
 ---
 
-## 5. STM32 Real-Time Domain
+## 5. Frozen Safety Architecture
 
-The active project phase is:
+STM32 Safety Supervisor remains authoritative for actuator-level safety.
 
-```text
-STM32 REAL-TIME CONTROL DOMAIN
-```
+Never weaken or bypass:
 
-MCU:
+- Motion Authority;
+- command, heartbeat and CAN freshness;
+- watchdogs;
+- fault handling;
+- motor-safe startup;
+- Safety Supervisor;
+- latched emergency-stop behavior.
 
-```text
-STM32G474RET6
-LQFP64
-```
+The Orange Pi determines where the robot should go. The STM32 determines whether requested motion can safely be executed at the actuator level.
 
-Board:
+Do not move LiDAR obstacle detection into STM32. Do not duplicate the STM32 safety state machine in ROS.
 
-```text
-DeveBox STM32G474R
-Ver: 20
-```
-
-Main references:
+Accepted real-hardware safety path:
 
 ```text
-ST DS12288 — STM32G474xB/xC/xE datasheet
-ST RM0440 — STM32G4 reference manual
+explicit START
+→ straight motion at 0.30 m/s
+→ real /scan
+→ frontal obstacle detection
+→ zero velocity
+→ Motion Authority withdrawal
+→ STM32 safe stop
+→ STOPPED latch
+→ obstacle removal does not restart
+→ new explicit START required
 ```
 
-### 5.1 Clock baseline
+Accepted LiDAR configuration:
 
 ```text
-HSE      = 8 MHz
-SYSCLK   = 170 MHz
-HCLK     = 170 MHz target
+RPLIDAR A1
+frontal sector: 30° centered forward
+stop distance: 0.60 m
 ```
 
-### 5.2 Frozen Pin Map v1
-
-| Function | MCU Pin | Peripheral / Mode |
-|---|---|---|
-| Encoder 1 A | PA0 | TIM2_CH1 / AF1 |
-| Encoder 1 B | PA1 | TIM2_CH2 / AF1 |
-| Debug UART TX | PA2 | USART2_TX / AF7 |
-| Debug UART RX | PA3 | USART2_RX / AF7 |
-| IMU CS | PA4 | GPIO output |
-| IMU SCLK | PA5 | SPI1_SCK / AF5 |
-| IMU MISO | PA6 | SPI1_MISO / AF5 |
-| IMU MOSI | PA7 | SPI1_MOSI / AF5 |
-| Motor A PWM | PA8 | TIM1_CH1 / AF6 |
-| Motor B PWM | PA9 | TIM1_CH2 / AF6 |
-| CAN RX | PA11 | FDCAN1_RX / AF9 |
-| CAN TX | PA12 | FDCAN1_TX / AF9 |
-| SWDIO | PA13 | SWD reserved |
-| SWCLK | PA14 | SWD reserved |
-| Battery ADC | PC0 | ADC1_IN6 |
-| IMU INT1 | PC4 | EXTI4 |
-| IMU INT2 | PC5 | EXTI5 / EXTI9_5 IRQ group |
-| Encoder 2 A | PC6 | TIM3_CH1 / AF2 |
-| Encoder 2 B | PC7 | TIM3_CH2 / AF2 |
-| TB6612 STBY | PC8 | GPIO output |
-| TB6612 AIN1 | PB12 | GPIO output |
-| TB6612 AIN2 | PB13 | GPIO output |
-| TB6612 BIN1 | PB14 | GPIO output |
-| TB6612 BIN2 | PB15 | GPIO output |
-
-Do not remap frozen pins for stylistic reasons.
-
-Change a frozen resource only when a real conflict or hardware failure proves the current allocation unusable.
-
-### 5.3 Current CubeMX baseline
+Accepted one-run observed timing:
 
 ```text
-TIM1
-PWM CH1 + CH2
-10 kHz
-initial duty = 0
-
-TIM2
-Encoder Interface
-
-TIM3
-Encoder Interface
-
-SPI1
-ICM-42688-P
-
-ADC1
-Battery voltage
-
-USART2
-Debug
-115200 8N1 baseline
-
-FDCAN1
-500 kbit/s nominal bring-up bitrate
-
-EXTI
-PC4 → EXTI4
-PC5 → EXTI9_5
-
-GPIO startup
-MOTOR_STBY = LOW
-AIN1/AIN2/BIN1/BIN2 = LOW
-IMU_CS = HIGH
+detection → zero velocity:              ~0.075 ms
+detection → Authority withdrawal:       ~1.276 ms
+detection → STM32 stop confirmation:    ~30.8 ms
 ```
 
-CAN FD production data-phase timing and message protocol are not frozen.
+These are observed values, not guaranteed worst-case limits.
 
-### 5.4 Peripheral ownership
-
-```text
-TIM1 → synchronized motor PWM
-TIM2 → encoder 1 hardware quadrature decoding
-TIM3 → encoder 2 hardware quadrature decoding
-SPI1 → ICM-42688-P
-ADC1 → battery measurement
-USART2 → debug / bring-up / fallback
-FDCAN1 → production transport direction
-SWD → debug / flash / bring-up
-```
-
-Use hardware peripherals instead of high-rate software polling.
-
-Do not decode quadrature encoders in GPIO polling tasks.
-
-### 5.5 Motor driver
-
-Motor driver:
-
-```text
-TB6612-based dual DC motor driver
-```
-
-Motor supply:
-
-```text
-12 V battery
-```
-
-Battery ADC divider:
-
-```text
-Vadc ≈ Vbattery / 11
-```
-
-The ratio must be calibrated against a multimeter before battery voltage is used for safety thresholds.
-
-Motor A/B ownership and motor polarity must be determined experimentally.
-
-Do not assume wheel mapping or sign.
-
-### 5.6 IMU
-
-```text
-ICM-42688-P
-SPI interface
-```
-
-Current MCU wiring:
-
-```text
-PA4 CS
-PA5 SCLK
-PA6 MISO
-PA7 MOSI
-PC4 INT1
-PC5 INT2
-```
-
-The breakout exposes both `VCC` and `3.3V`; their exact board-level meaning must be physically understood before unsafe power wiring is attempted.
-
-### 5.7 CAN transceiver
-
-Current module:
-
-```text
-TJA1042 / TJA1043 family transceiver module
-```
-
-MCU controller:
-
-```text
-FDCAN1
-```
-
-The exact module subvariant, termination arrangement, standby behavior, and logic-level implementation remain hardware verification items.
-
-Do not invent those facts in software or documentation.
+Do not repeat this accepted safety demo during unrelated stages. Revalidate navigation plus the safety-stop path only at the integrated navigation+safety stage or when a change directly affects it.
 
 ---
 
-## 6. Real-Time Responsibility Split
+## 6. Active Navigation Execution Order
 
-### Orange Pi
-
-Owns:
+Proceed one dependency at a time:
 
 ```text
-ROS 2
-Perception
-SLAM
-Nav2
-high-level goals
-body velocity command
-ROS bridge
-odometry publication
-system logging
+1. ROS differential-drive odometry from 0x181
+2. single-authority odom → base_link TF
+3. minimum real-hardware odometry validation
+4. real LiDAR mapping
+5. save/reload map
+6. localization
+7. Nav2 + real drivetrain
+8. point-to-point autonomous navigation
+9. navigation + independent safety-stop validation
 ```
 
-### STM32
+Do not begin with depth-camera integration, perception expansion, EKF/sensor fusion without demonstrated need, Nav2 tuning before odometry/TF, speculative firmware changes, or unrelated refactoring.
 
-Owns:
+### Current immediate stage
+
+**ROS Codex only.** Firmware Codex is not needed unless a concrete Protocol 1.0 blocker appears.
 
 ```text
-command validation
-command freshness
-heartbeat handling
-motor enable / disable
-PWM
-motor direction
-encoder acquisition
-wheel-speed estimation
-wheel velocity control
-IMU acquisition
-battery ADC
-watchdog
-fault detection
-safety state machine
-CAN / CAN FD
-UART diagnostics
-telemetry
+0x181 cumulative wheel positions
+→ differential-drive integration
+→ nav_msgs/msg/Odometry
+→ odom → base_link
+→ minimal real-hardware validation
 ```
 
-Deterministic wheel control belongs on the STM32 unless a future architecture decision explicitly changes this split.
+For consecutive valid samples:
+
+```text
+d_left  = delta_left_counts  * 0.0001362305
+d_right = delta_right_counts * 0.0001363976
+
+d_center = (d_left + d_right) / 2
+d_theta  = (d_right - d_left) / 0.125
+```
+
+Use standard planar differential-drive integration consistent with ROS frame conventions.
+
+Implementation must:
+
+- preserve independent left/right scales;
+- ignore invalid samples rather than integrate them;
+- re-baseline on MCU restart/timestamp discontinuity;
+- tolerate sequence gaps through cumulative counts;
+- maintain one `odom → base_link` authority;
+- add only what the current navigation architecture needs.
+
+Do not add firmware telemetry, new CAN messages, sensor fusion or extra infrastructure for basic wheel odometry.
+
+### Minimum odometry validation
+
+Required evidence only:
+
+```text
+physical wheel motion
+→ valid 0x181 cumulative telemetry
+→ ROS /odom changes
+→ forward motion produces positive forward displacement
+→ turning produces correct yaw sign
+→ odom → base_link is stable and single-authority
+```
+
+Use one or a small number of controlled motions sufficient to establish those facts.
+
+Do not perform broad calibration, long-duration drift characterization, exhaustive angle/distance testing, stress testing, repeated runs or full regression suites unless this simple validation exposes an actual problem.
+
+Refine wheel/track calibration later only if real navigation shows that calibration error materially affects the demo.
 
 ---
 
-## 7. Differential-Drive Contract
+## 7. Minimal-Change Firmware Policy
 
-Nav2 produces:
+Accepted firmware behavior remains unchanged unless a verified blocker requires a narrow change.
 
-```text
-linear.x  = body linear velocity v [m/s]
-angular.z = body angular velocity ω [rad/s]
-```
-
-The intended architecture is:
+Default firmware decision:
 
 ```text
-Orange Pi sends body command (v, ω)
-→ STM32 validates command
-→ STM32 performs differential-drive conversion
-→ left/right wheel velocity targets
-→ wheel control
+NO CHANGE
 ```
 
-Conceptually:
+Do not add without a demonstrated current requirement:
 
-```text
-v_left  = v - ω * track_width / 2
-v_right = v + ω * track_width / 2
-```
+- FreeRTOS tasks;
+- DMA;
+- GPIO interrupts;
+- queues/mutexes/timers;
+- higher-rate sensors;
+- additional telemetry or CAN messages;
+- broad abstractions/refactors.
 
-The following drivetrain measurements are still required before real velocity control / odometry is accepted:
-
-```text
-effective wheel radius
-wheel-track distance
-encoder CPR/PPR definition
-gear ratio
-motor A/B → wheel mapping
-encoder 1/2 → wheel mapping
-forward-count sign
-```
-
-Do not derive drivetrain geometry from the Nav2 collision footprint.
+If a required change touches CubeMX-managed configuration, keep `.ioc` synchronized with production firmware.
 
 ---
 
-## 8. Safety Architecture
+## 8. Codex Autonomy and Action Gates
 
-Autonomous motor motion is not allowed before a real safety layer exists.
+### Pre-approved read-only work
 
-Minimum state model:
+Within the assigned domain and known project resources, relevant read-only inspection is pre-approved. Do not ask permission to inspect files/source, Git state, build configuration/output, logs, ROS graph/state, device/configuration state, documentation or the known Orange Pi runtime.
 
-```text
-BOOT
-INIT
-SAFE
-READY
-ACTIVE
-FAULT
-```
+If one safe read-only method fails, try another bounded method only when useful.
 
-Required behavior:
+Domain isolation still applies:
 
 ```text
-power-up
-→ motors disabled
-
-invalid command
-→ reject
-
-stale command
-→ deterministic safe stop
-
-communication loss
-→ safe stop
-
-watchdog failure
-→ safe motor state
-
-control fault
-→ safe motor state
+Firmware Codex: no ros2_ws/
+ROS Codex:      no firmware/
 ```
 
-`MOTOR_STBY` is a hardware safety mechanism and must remain LOW through initialization until the safety supervisor authorizes motion.
+### Routine reversible implementation
 
-Communication software must not be the only runaway-motor protection.
+Within its assigned domain, Codex may directly perform reversible work required by the active task: edit project-owned source/configuration, build when useful, run minimal non-destructive validation, inspect diffs, use temporary diagnostics, and update relevant documentation/CHANGELOG.
 
----
+Do not automatically run formatting, static analysis, unit tests, integration suites or full builds merely because they exist. Run only what provides meaningful confidence for the current change.
 
-## 9. FreeRTOS Direction
+Always inspect existing files before overwriting them. Never destroy unrelated user work.
 
-FreeRTOS is part of the STM32 architecture.
+### ROS runtime host
 
-Prefer:
-
-```text
-hardware timers
-encoder mode
-DMA when justified
-interrupts / EXTI
-FDCAN hardware
-SPI hardware
-```
-
-over high-frequency polling tasks.
-
-Do not create one task per peripheral without a measured scheduling need.
-
-Initial conceptual execution domains may later include:
-
-```text
-Safety / Supervisor
-Motor Control
-IMU acquisition
-Communication
-Telemetry
-```
-
-Task rates, priorities, stack sizes, queues, and DMA usage must be validated against real requirements.
-
-Do not present guessed rates as final design.
-
----
-
-## 10. Development Roadmap
-
-Current ordered path:
-
-```text
-Pin Allocation v1                         FROZEN
-        ↓
-STM32CubeMX configuration                 CURRENT
-        ↓
-Clock / SWD / safe GPIO baseline
-        ↓
-USART2 debug bring-up
-        ↓
-ADC battery measurement
-        ↓
-TIM2 / TIM3 encoder bring-up
-        ↓
-SPI1 + ICM WHO_AM_I
-        ↓
-IMU sample / interrupt bring-up
-        ↓
-TIM1 10 kHz PWM verification
-(motors still disabled)
-        ↓
-FreeRTOS minimal bring-up
-        ↓
-Safety supervisor
-        ↓
-Watchdog
-        ↓
-Controlled motor test
-        ↓
-Encoder-based wheel-speed estimation
-        ↓
-Closed-loop wheel velocity control
-        ↓
-FDCAN physical bring-up
-        ↓
-Shared transport protocol v1
-        ↓
-Orange Pi ↔ STM32 bridge
-        ↓
-Body velocity command execution
-        ↓
-Wheel odometry
-        ↓
-ROS nav_msgs/msg/Odometry
-        ↓
-Real /odom
-        ↓
-Deliberate odom→base_link TF authority transition
-        ↓
-Nav2 Controller / FollowPath
-        ↓
-Closed-loop physical navigation
-        ↓
-Obstacle avoidance
-        ↓
-Autonomous navigation to target
-```
-
-Do not move Localization/EKF ahead of the real-control critical path without a demonstrated requirement.
-
----
-
-## 11. Autonomy Policy
-
-The user explicitly prefers high agent autonomy.
-
-### 11.1 Read-only operations
-
-Within the agent's permitted code domain, shared files, known project machine, and known project resources:
-
-```text
-ALL ORDINARY READ-ONLY OPERATIONS ARE PRE-APPROVED.
-```
-
-Do not ask permission to:
-
-- inspect files;
-- search source;
-- inspect Git state;
-- inspect build files;
-- inspect process state;
-- inspect logs;
-- inspect device nodes;
-- inspect ROS graph state;
-- inspect tool versions;
-- inspect compiler output;
-- inspect hardware enumeration;
-- inspect `/proc` or `/sys`;
-- inspect configuration;
-- inspect documentation;
-- query the known Orange Pi host;
-- run bounded read-only diagnostics.
-
-Examples:
-
-```text
-ls
-find
-rg
-grep
-cat
-head
-tail
-sed -n
-stat
-git status
-git diff
-git log
-git show
-ros2 node list
-ros2 topic list
-ros2 topic echo --once
-ros2 topic hz
-ros2 param get
-ros2 interface show
-systemctl status
-journalctl
-lsusb
-ip addr
-ip route
-```
-
-If a read-only command fails:
-
-```text
-inspect error
-→ try another safe read-only method
-→ continue
-```
-
-Do not stop simply because one diagnostic path failed.
-
-**This read-only authorization does not override the peer-domain isolation rule.**
-
-Firmware Codex does not inspect `ros2_ws/`.
-ROS Codex does not inspect `firmware/`.
-
-### 11.2 Routine project-local work
-
-Within the assigned implementation domain, Codex is authorized to perform routine, reversible engineering work needed by the active task without asking for every step.
-
-This includes:
-
-- create/edit project-owned source;
-- create/edit build configuration;
-- generate code from an already approved configuration;
-- format code;
-- run static analysis;
-- compile/build;
-- run unit tests;
-- run non-actuating integration tests;
-- inspect generated diffs;
-- create temporary diagnostics;
-- remove temporary files created by the same task;
-- update relevant documentation;
-- add a cross-domain `CHANGELOG.md` entry when required.
-
-Always inspect existing files before overwriting them.
-
-Never destroy unrelated user work.
-
-### 11.3 ROS SSH authorization
-
-ROS Codex may connect without conversational approval to:
+ROS Codex may use the normal non-root account on:
 
 ```text
 HwHiAiUser@robot-core.local
-```
-
-Use a normal non-root account.
-
-Do not scan the LAN or substitute another host.
-
-On the known Orange Pi, read-only inspection is pre-approved.
-
-Routine project-owned work under:
-
-```text
 /data/ros2_ws
 /data/projects
 ```
 
-is allowed when directly required by the active task and reversible.
+Do not scan the LAN or substitute another host.
 
-The actual Orange Pi runtime is the source of truth for runtime acceptance.
+The actual Orange Pi runtime is the source of truth for ROS/hardware runtime acceptance. A local build alone does not prove real robot behavior.
 
-Do not claim a local build proves remote hardware behavior.
-
-### 11.4 Firmware build / flash behavior
-
-Firmware Codex may:
-
-- edit firmware source;
-- regenerate CubeMX-owned code from the current approved `.ioc`;
-- build the firmware;
-- inspect map/size output;
-- run static checks;
-- inspect SWD/debug configuration.
-
-Firmware flashing is allowed when it is a normal step of an already approved non-actuating bring-up stage **and** the motor-safe startup contract remains intact.
-
-Stop before flashing if the new firmware may:
-
-- assert motor enable;
-- change safety semantics;
-- change option bytes / readout protection;
-- alter boot configuration;
-- perform irreversible flash operations;
-- actuate external hardware unexpectedly.
-
----
-
-## 12. Actions That Require a Decision Report
-
-Do not interrupt the user for routine engineering.
-
-Stop only when one of the following is reached.
-
-### 12.1 Architecture decisions
+### Stop before destructive/privileged/system-wide work
 
 Examples:
-
-- MCU ↔ Linux responsibility split;
-- communication transport architecture;
-- CAN message model;
-- public ROS topic/action contract;
-- TF ownership architecture;
-- package/repository boundary changes;
-- drivetrain control architecture;
-- localization architecture;
-- sensor replacement.
-
-### 12.2 Safety-critical behavior
-
-Examples:
-
-- first motor actuation of a new stage;
-- autonomous motor enable;
-- changing `STBY` safety policy;
-- watchdog semantics;
-- command-timeout policy;
-- fault-recovery semantics;
-- battery safety thresholds;
-- emergency-stop behavior.
-
-### 12.3 Physical electrical uncertainty
-
-Stop when progress requires unsafe assumptions about:
-
-- power wiring;
-- module voltage compatibility;
-- transceiver termination;
-- motor polarity;
-- encoder ownership;
-- unknown pin electrical behavior.
-
-### 12.4 Destructive / privileged / system-wide actions
-
-Stop before:
 
 ```text
-sudo
-root login
+sudo or root login
 system package installation/removal
 OS upgrade
 kernel/BSP replacement
-system-wide configuration changes
-permission/security changes
+system-wide configuration/security/permission changes
 destructive filesystem operations
 git push --force
 git reset --hard
 git clean -fd
 ```
 
-Do not use `chmod 777`.
+Do not use `chmod 777`. Do not install speculative dependencies.
 
-Do not install speculative dependencies.
+Firmware flashing requires a decision if the new image may alter motor enable, safety semantics, option bytes/readout protection, boot configuration, irreversible flash state or unexpected actuation.
 
-### 12.5 Cross-domain contract changes
+### Decision gates
 
-Stop before inventing or changing a frozen interface that requires coordinated firmware and ROS changes unless the current task explicitly approved that protocol evolution.
+Stop and report only for a real unresolved decision involving:
 
----
+- cross-domain architecture/responsibility split;
+- frozen Protocol 1.0 evolution;
+- public ROS contract or TF ownership architecture;
+- safety-critical behavior;
+- materially new/unsafe actuation;
+- Motion Authority/watchdog/timeout/fault/emergency-stop semantics;
+- unsafe physical/electrical uncertainty;
+- destructive/privileged/system-wide action;
+- sensor replacement or major localization/navigation architecture change.
 
-## 13. Decision Report Format
+Do not ask questions repository inspection can answer.
 
-When a real decision gate is reached, report:
+Use:
 
 ```text
 DECISION REQUIRED
 
 Observed:
-<verified evidence>
-
+...
 Current stage:
-<stage / milestone>
-
+...
 Why execution stopped:
-<exact architecture / safety / physical / destructive decision>
-
+...
 Recommended action:
-<one recommended option>
-
+...
 Alternatives:
-<only if materially useful>
-
+... only if useful
 Impact:
-<firmware / ROS / interface / safety / docs impact>
-
+...
 Rollback:
-<how to reverse if applicable>
-
+... if applicable
 Decision requested:
-<precise question>
+...
 ```
-
-Do not ask vague questions that can be answered by inspection.
 
 ---
 
-## 14. Stage Completion Behavior
+## 9. Documentation, CHANGELOG and Git Discipline
 
-At the end of a stage, stop and produce a complete milestone report before advancing into a new stage that requires new direction.
+Technical documentation is part of implementation.
 
-Report:
+When a meaningful stage is accepted:
+
+1. update relevant technical documentation immediately;
+2. update `CHANGELOG.md` if the result changes a cross-domain contract, assumption, milestone or next integration boundary;
+3. record limitations and measured values accurately;
+4. keep documentation aligned before unrelated work starts.
+
+Do not postpone documentation until the end of a long development sequence.
+
+Persistent docs should distinguish `VERIFIED`, `FROZEN`, `IN PROGRESS`, `PROPOSED` and `TBD`. Maintain English/Chinese counterparts where the repository already requires them.
+
+README files are showcase documents, not development logs. Update them only for meaningful externally visible milestones such as accepted real `/odom`, mapping/localization, physical Nav2 execution or completed autonomous navigation.
+
+### CHANGELOG
+
+`CHANGELOG.md` is for cross-domain communication, not trivial local history.
+
+Record peer-relevant changes to CAN/interface behavior, telemetry/command/safety semantics, timing, encoder semantics, wheel signs/scales/geometry, startup, Motion Authority/watchdogs, deployment configuration, production CAN interface, or milestones that change the peer's next action.
+
+Do not record formatting-only changes, temporary diagnostics, trivial refactors or isolated implementation details with no peer impact.
+
+Every **new** entry must use exactly:
+
+```text
+YYYY-MM-DDTHH:MM
+```
+
+Example:
+
+```text
+2026-09-03T14:25
+```
+
+No seconds, timezone suffix, space between date/time or alternative format. Do not rewrite old entries solely to normalize formatting.
+
+A cross-domain entry must state what changed, why, what interface/behavior is affected, and whether the peer domain must act.
+
+### Git
+
+Before editing, inspect the relevant file and relevant Git status/diff.
+
+After editing, run only checks required by the change and review the resulting diff.
+
+Do not revert unrelated dirty-worktree changes. Do not perform destructive Git operations.
+
+Keep local details in their owning domain and communicate peer-impacting changes through `CHANGELOG.md`.
+
+Finish a coherent accepted stage before starting unrelated work.
+
+---
+
+## 10. Stage Completion and Current Target
+
+A stage is complete only when the behavior required by that stage has sufficient real-target or minimum appropriate evidence. A successful build alone does not prove hardware behavior, but unrelated subsystem revalidation is not required.
+
+Use milestone reports:
 
 ```text
 MILESTONE REPORT
 
 Stage:
 ...
-
 Status:
 PASS / PARTIAL / FAIL
-
 Files changed:
 ...
-
-Build / test commands:
+Build / validation performed:
 ...
-
 Verified evidence:
 ...
-
 Measured values:
 ...
-
 Safety state:
 ...
-
 Shared-interface impact:
 ...
-
 CHANGELOG entry:
 added / not required
-
 Documentation updated:
 ...
-
 Open issues:
 ...
-
 Recommended next stage:
 ...
 ```
 
-A module is not `COMPLETE` merely because code builds.
+Report only measurements actually observed or already accepted by the project.
 
----
-
-## 15. Evidence-First Acceptance
-
-Never claim hardware completion because:
+Current accepted chain:
 
 ```text
-CubeMX generated code
-build succeeded
-HAL API returned
-topic exists
-node exists
+STM32 drivetrain + closed-loop wheel control          ACCEPTED
+CAN FD production transport on can3                   ACCEPTED
+Protocol 1.0                                          FROZEN
+Motion Authority / watchdog / Safety Supervisor       ACCEPTED
+real RPLIDAR latched safety-stop demo                  ACCEPTED
+0x181 sufficiency for host wheel odometry              ACCEPTED
 ```
 
-Acceptance requires real evidence.
-
-### UART
+Active unfinished chain:
 
 ```text
-real transmitted / received bytes
-```
-
-### ADC
-
-```text
-raw ADC
-+ calculated voltage
-+ multimeter comparison
-```
-
-### Encoder
-
-```text
-real counter changes from physical wheel rotation
-direction verified
-```
-
-### IMU
-
-```text
-WHO_AM_I
-real accelerometer / gyroscope samples
-interrupt behavior when used
-```
-
-### PWM
-
-```text
-scope / logic analyzer / equivalent electrical measurement
-frequency verified
-duty verified
-motor remains disabled during non-actuating test
-```
-
-### CAN
-
-```text
-real transmitted and received frames
-error state inspected
-termination / bitrate physically valid
-```
-
-### Motor
-
-```text
-controlled low-risk motion
-direction verified
-safe stop verified
-```
-
-### Wheel control
-
-```text
-measured wheel velocity follows target
-```
-
-### Odometry
-
-```text
-physical motion produces quantitatively consistent /odom
-```
-
-### Autonomous navigation
-
-```text
-real goal
-→ real path
-→ real cmd_vel
-→ STM32 execution
-→ real odometry feedback
-→ obstacle avoidance
+ROS wheel odometry
+→ odom → base_link
+→ real LiDAR mapping
+→ saved-map reload
+→ localization
+→ Nav2 real drivetrain integration
+→ explicit navigation goal
+→ physical autonomous motion with odometry feedback
 → target reached
+→ integrated navigation + independent safety-stop validation
 ```
 
----
+Depth-camera/perception expansion is outside this critical path.
 
-## 16. Documentation Source Policy
-
-Priority for technical truth:
+Final real-hardware target:
 
 ```text
-1. real measured system behavior
-2. actual source / generated configuration
-3. official manufacturer documentation
-4. official upstream project documentation
-5. secondary references only when necessary
+system startup
+→ localization in saved map
+→ explicit user navigation goal
+→ autonomous path planning
+→ autonomous differential-drive motion
+→ accepted safety protections preserved
+→ requested goal reached
 ```
 
-Primary references include:
-
-```text
-STMicroelectronics:
-DS12288
-RM0440
-
-TDK InvenSense:
-ICM-42688-P datasheet DS-000347
-
-Toshiba:
-TB6612FNG datasheet
-
-NXP:
-TJA1042 / TJA1043 datasheets
-
-ROS:
-ROS 2 Humble / Nav2 official documentation and installed behavior
-```
-
-Do not replace observed hardware behavior with a tutorial assumption.
-
----
-
-## 17. Git and Change Discipline
-
-Before editing:
-
-```text
-inspect file
-inspect relevant Git diff/status
-```
-
-After editing:
-
-```text
-build/test
-review diff
-```
-
-Do not revert unrelated dirty worktree changes.
-
-Do not perform destructive Git operations.
-
-A local implementation detail should stay in its owning domain.
-
-A change that affects the peer domain should be summarized in `CHANGELOG.md`.
-
----
-
-## 18. Current Immediate Task
-
-The current project boundary is:
-
-```text
-High Computing Domain:
-COMPLETE THROUGH NON-ACTUATING NAVIGATION
-
-STM32:
-PIN MAP FROZEN
-CUBEMX / FIRMWARE BASELINE IN PROGRESS
-```
-
-Immediate firmware path:
-
-```text
-CubeMX configuration
-→ generate project
-→ build
-→ inspect generated initialization
-→ safe SWD bring-up
-→ USART2
-```
-
-Immediate ROS path:
-
-```text
-remain frozen unless needed for STM32 integration
-→ prepare only when shared protocol / bridge work reaches its stage
-```
-
-Do not reopen perception work now.
-
----
-
-## 19. Final System Acceptance Target
-
-The project reaches its principal closed-loop milestone when:
-
-```text
-Navigation goal
-→ Nav2 planning
-→ Nav2 controller
-→ geometry_msgs/msg/Twist
-→ Linux-to-MCU bridge
-→ CAN / CAN FD
-→ STM32 command validation
-→ differential-drive wheel targets
-→ closed-loop motor control
-→ physical robot motion
-→ encoder feedback
-→ wheel odometry
-→ nav_msgs/msg/Odometry
-→ Nav2 feedback
-→ obstacle avoidance
-→ target reached
-```
-
----
-
-# GitHub Repository Synchronization and Milestone Release Policy
-
-The RobotProject repository uses Git and GitHub as the official project history and release archive.
-
-Codex is responsible for maintaining repository consistency during milestone development.
-
-GitHub synchronization is part of the engineering workflow.
-
----
-
-## Git Read Operations
-
-Codex may execute all Git read-only operations without requesting permission.
-
-Allowed examples:
-
-```bash
-git status
-git status --short
-git diff
-git diff --cached
-git diff --check
-git log
-git log --oneline
-git show
-git branch
-git branch -a
-git remote -v
-git rev-parse HEAD
-
-That final behavior must be demonstrated on the real robot.
-
-Until then, continue breadth-first integration and freeze completed subsystems.
+Continue one dependency at a time. Prefer real execution progress over extra analysis, testing, infrastructure or documentation volume that does not advance this chain.
